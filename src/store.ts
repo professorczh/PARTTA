@@ -14,7 +14,7 @@ import {
   applyEdgeChanges 
 } from '@xyflow/react';
 
-export type NodeType = 'text' | 'image' | 'video' | 'creative';
+export type NodeType = 'none' | 'text' | 'image' | 'video' | 'creative';
 
 export type ProviderType = 'gemini' | 'openai-compatible' | 'mock';
 
@@ -30,6 +30,8 @@ export interface ModelConfig {
   name: string;
   capabilities: ModelCapability;
   isCustom?: boolean;
+  supportedRatios?: string[];
+  supportedResolutions?: string[];
 }
 
 export interface ProviderConfig {
@@ -57,6 +59,7 @@ export interface NodeData extends Record<string, unknown> {
   shortId?: string; // e.g. IMG_1
   isLoading?: boolean;
   pins?: Pin[];
+  deletedPins?: Pin[]; // Track deleted pins for recovery
   referencedPins?: string[]; // IDs of pins from parent node
   parentId?: string; // For tracing origin
   config?: {
@@ -83,6 +86,10 @@ interface TapState {
   removePin: (nodeId: string, pinId: string) => void;
   addReferencedPin: (nodeId: string, pinId: string) => void;
   removeReferencedPin: (nodeId: string, pinId: string) => void;
+  // PIN Mode
+  isPinMode: boolean;
+  setPinMode: (enabled: boolean) => void;
+  restorePin: (nodeId: string, pinId: string) => void;
   // Models & Providers
   providers: ProviderConfig[];
   globalDefaults: {
@@ -127,7 +134,7 @@ export const useTapStore = create<TapState>()(
           enabled: true,
           models: [
             { id: 'mock-text', name: 'Mock Text Generator', capabilities: { text: true, vision: false, image: false, video: false } },
-            { id: 'mock-image', name: 'Mock Image Generator', capabilities: { text: false, vision: false, image: true, video: false } },
+            { id: 'mock-image', name: 'Mock Image Generator', capabilities: { text: false, vision: false, image: true, video: false }, supportedRatios: ['1:1', '16:9', '9:16'], supportedResolutions: ['1K'] },
           ]
         },
         {
@@ -139,7 +146,9 @@ export const useTapStore = create<TapState>()(
           models: [
             { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', capabilities: { text: true, vision: true, image: false, video: false } },
             { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', capabilities: { text: true, vision: true, image: false, video: false } },
-            { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Image', capabilities: { text: false, vision: false, image: true, video: false } },
+            { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Image', capabilities: { text: false, vision: false, image: true, video: false }, supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'], supportedResolutions: ['1K'] },
+            { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', capabilities: { text: false, vision: false, image: true, video: false }, supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'], supportedResolutions: ['1K', '2K', '4K'] },
+            { id: 'veo-3.1-fast-generate-preview', name: 'Veo 3.1 Fast', capabilities: { text: false, vision: false, image: false, video: true }, supportedRatios: ['16:9', '9:16'], supportedResolutions: ['720p', '1080p'] },
           ]
         }
       ],
@@ -202,10 +211,23 @@ export const useTapStore = create<TapState>()(
         });
       },
       removePin: (nodeId, pinId) => {
+        const nodes = get().nodes;
+        const node = nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        const pinToRemove = node.data.pins?.find(p => p.id === pinId);
+        if (!pinToRemove) return;
+
         set({
-          nodes: get().nodes.map((node) => 
+          nodes: nodes.map((node) => 
             node.id === nodeId 
-              ? { ...node, data: { ...node.data, pins: (node.data.pins || []).filter(p => p.id !== pinId) } } 
+              ? { 
+                  ...node, 
+                  data: { 
+                    ...node.data, 
+                    pins: (node.data.pins || []).filter(p => p.id !== pinId),
+                    deletedPins: [...(node.data.deletedPins || []), pinToRemove]
+                  } 
+                } 
               : node
           ),
         });
@@ -226,6 +248,27 @@ export const useTapStore = create<TapState>()(
               ? { ...node, data: { ...node.data, referencedPins: (node.data.referencedPins || []).filter(id => id !== pinId) } } 
               : node
           ),
+        });
+      },
+      // PIN Mode
+      isPinMode: false,
+      setPinMode: (enabled) => set({ isPinMode: enabled }),
+      restorePin: (nodeId, pinId) => {
+        const nodes = get().nodes;
+        const node = nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        const pinToRestore = node.data.deletedPins?.find(p => p.id === pinId);
+        if (!pinToRestore) return;
+
+        set({
+          nodes: nodes.map(n => n.id === nodeId ? {
+            ...n,
+            data: {
+              ...n.data,
+              pins: [...(n.data.pins || []), pinToRestore],
+              deletedPins: n.data.deletedPins?.filter(p => p.id !== pinId)
+            }
+          } : n)
         });
       },
       addProvider: (provider) => set({ providers: [...get().providers, provider] }),

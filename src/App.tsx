@@ -145,7 +145,7 @@ export default function App() {
           snapToGrid
           snapGrid={[15, 15]}
           defaultEdgeOptions={{
-            type: 'smoothstep',
+            type: 'default',
             animated: true,
           }}
         >

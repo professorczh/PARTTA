@@ -76,9 +76,22 @@
   filter: drop-shadow(0 0 5px var(--hud-red-glow));
 }
 
+.react-flow__edge.animated path {
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+}
+
 @keyframes dashdraw {
   from { stroke-dashoffset: 10; }
   to { stroke-dashoffset: 0; }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* React Flow Customizations */

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { NodeData, useTapStore, Pin, NodeType, TapNode, ProviderConfig, ModelConfig } from './store';
-import { Play, Image as ImageIcon, Video, Type, MapPin, Loader2, Scissors, X, ChevronDown } from 'lucide-react';
+import { Play, Image as ImageIcon, Video, Type, MapPin, Loader2, Scissors, X, ChevronDown, Pin as PinIcon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useEffect } from 'react';
 import { MaskModal } from './MaskModal';
 import { PromptInput } from './PromptInput';
 import { aiService } from './services/aiService';
@@ -25,7 +26,26 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
   const providers = useTapStore((state) => state.providers);
   const globalDefaults = useTapStore((state) => state.globalDefaults);
   
+  const isPinMode = useTapStore((state) => state.isPinMode);
+  const setPinMode = useTapStore((state) => state.setPinMode);
+  
   const imageRef = useRef<HTMLDivElement>(null);
+
+  // CTRL key listener for PIN mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') setPinMode(true);
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') setPinMode(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [setPinMode]);
 
   // Find parent node
   const parentNode = data.parentId ? nodes.find(n => n.id === data.parentId) : null;
@@ -39,16 +59,32 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
   const isSemiSelected = selectedNode && selectedNode.data.parentId === id;
 
   // Which pins to show on THIS node?
-  const pinsToShow = useMemo(() => {
-    if (isSemiSelected && selectedNode) {
-      // Extract PIN indices from child's prompt
-      const prompt = selectedNode.data.prompt || '';
-      const matches = prompt.matchAll(/@IMG_\d+_PIN_(\d+)/g);
-      const referencedIndices = Array.from(matches).map(m => parseInt(m[1]) - 1);
-      return data.pins?.filter((_, idx) => referencedIndices.includes(idx)) || [];
-    }
-    return [];
-  }, [isSemiSelected, selectedNode, data.pins]);
+  const pinsData = useMemo(() => {
+    const allPins = data.pins || [];
+    const prompt = selectedNode?.data.prompt || '';
+    const matches = Array.from(prompt.matchAll(/@IMG_\d+_PIN_(\d+)/g));
+    const referencedIndices = matches.map(m => parseInt(m[1]) - 1);
+
+    return allPins.map((pin, idx) => {
+      const isReferenced = referencedIndices.includes(idx);
+      let isGhost = false;
+      
+      if (selected) {
+        isGhost = false; // Full selection: all 100%
+      } else if (isSemiSelected) {
+        isGhost = !isReferenced; // Semi selection: only referenced are 100%
+      } else {
+        isGhost = true; // Unselected: all 30% (ghost)
+      }
+
+      return {
+        ...pin,
+        index: idx,
+        isReferenced,
+        isGhost
+      };
+    });
+  }, [isSemiSelected, selectedNode, data.pins, selected]);
 
   // Available models for this node type
   const availableModels = useMemo(() => {
@@ -135,7 +171,8 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
     // Prohibit marking PINs when multiple nodes are selected
     if (selectedNodes.length > 1) return;
 
-    if (e.ctrlKey && imageRef.current && data.output && data.type === 'image') {
+    if ((isPinMode || e.ctrlKey) && imageRef.current && data.output && data.type === 'image') {
+      e.stopPropagation(); // Prevent de-selection in PIN mode
       const rect = imageRef.current.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
@@ -250,6 +287,7 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
             data.type === 'video' ? "bg-purple-500/20 text-purple-400" :
             "bg-emerald-500/20 text-emerald-400"
           )}>
+            {data.type === 'none' && <div className="w-3.5 h-3.5 rounded-full border border-current opacity-40" />}
             {data.type === 'text' && <Type size={14} />}
             {data.type === 'image' && <ImageIcon size={14} />}
             {data.type === 'video' && <Video size={14} />}
@@ -260,51 +298,18 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* Model Selector Dropdown */}
-          <div className="relative group/model">
-            <button className={clsx(
-              "flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-white/5 text-[9px] font-mono transition-all",
-              isUsingDefault ? "text-[var(--app-text-muted)] italic" : "text-white font-bold"
-            )}>
-              {currentModel ? currentModel.model.name : 'Select Model'}
-              {isUsingDefault && <span className="text-[7px] opacity-50 ml-1">(Auto)</span>}
-              <ChevronDown size={10} />
+          {data.type === 'image' && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); setPinMode(!isPinMode); }}
+              className={cn(
+                "p-1.5 rounded-lg transition-all",
+                isPinMode ? "bg-[var(--brand-red)] text-white" : "hover:bg-white/5 text-[var(--app-text-muted)] hover:text-white"
+              )}
+              title="PIN Mode (Hold CTRL)"
+            >
+              <PinIcon size={14} />
             </button>
-            <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--app-panel)] border border-[var(--app-border)] rounded-xl shadow-2xl opacity-0 invisible group-hover/model:opacity-100 group-hover/model:visible transition-all z-50 overflow-hidden">
-              <div className="p-2 border-b border-[var(--app-border)] text-[8px] uppercase tracking-widest text-[var(--app-text-muted)] flex justify-between items-center">
-                <span>Available Models</span>
-                {!isUsingDefault && (
-                  <button 
-                    onClick={() => updateNodeData(id, { config: { ...data.config, model: undefined } })}
-                    className="text-[7px] text-blue-400 hover:underline"
-                  >
-                    Reset to Auto
-                  </button>
-                )}
-              </div>
-              <div className="max-h-48 overflow-y-auto">
-                {availableModels.map(({ provider, model }) => (
-                  <button
-                    key={`${provider.id}-${model.id}`}
-                    onClick={() => updateNodeData(id, { config: { ...data.config, model: `${provider.id}:${model.id}` } })}
-                    className={clsx(
-                      "w-full px-3 py-2 text-left text-[10px] hover:bg-white/5 flex flex-col gap-0.5 transition-colors",
-                      currentModel?.model.id === model.id ? "bg-[var(--brand-red)]/20 text-[var(--brand-red)]" : "text-white"
-                    )}
-                  >
-                    <span className="font-bold">{model.name}</span>
-                    <span className="text-[8px] opacity-60 uppercase">{provider.name}</span>
-                  </button>
-                ))}
-                {availableModels.length === 0 && (
-                  <div className="p-4 text-[9px] text-center text-[var(--app-text-muted)] italic">No compatible models found. Check Models settings.</div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="h-4 w-px bg-[var(--app-border)] mx-1" />
-
+          )}
           {data.output && data.type === 'image' && (
             <button 
               onClick={() => setIsMaskModalOpen(true)}
@@ -351,37 +356,44 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
             )}
 
             {/* Pins Logic */}
-            {pinsToShow?.map((pin) => {
-              const pinIdx = data.pins?.findIndex(p => p.id === pin.id);
-              return (
-                <div 
-                  key={pin.id}
-                  className="absolute w-6 h-6 -ml-3 -mt-3 flex items-center justify-center transition-all hover:scale-125 group/pin cursor-pointer"
-                  style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-                  onClick={(e) => handlePinClick(e, pin.id)}
-                >
-                  <div className="relative">
-                    <MapPin size={24} className="text-[var(--brand-red)] drop-shadow-[0_0_8px_rgba(153,27,27,0.8)]" fill="currentColor" />
-                    <span className="absolute inset-0 flex items-center justify-center text-white text-[10px] font-bold pb-1">
-                      {pinIdx !== undefined ? pinIdx + 1 : '?'}
-                    </span>
-                    {/* Delete button on hover */}
-                    {selected && (
-                      <button
-                        onClick={(e) => handleRemovePin(e, pin.id)}
-                        className="absolute -top-2 -right-2 bg-black border border-white/20 rounded-full p-0.5 opacity-0 group-hover/pin:opacity-100 transition-opacity hover:bg-red-600"
-                      >
-                        <X size={8} className="text-white" />
-                      </button>
-                    )}
-                  </div>
+            {pinsData.map((pin) => (
+              <div 
+                key={pin.id}
+                className={cn(
+                  "absolute w-6 h-6 -ml-3 -mt-3 flex items-center justify-center transition-all hover:scale-125 group/pin cursor-pointer z-20",
+                  pin.isGhost ? "opacity-30 grayscale-[0.5] hover:opacity-100 hover:grayscale-0" : "opacity-100"
+                )}
+                style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+                onClick={(e) => handlePinClick(e, pin.id)}
+              >
+                <div className="relative">
+                  <MapPin 
+                    size={24} 
+                    className={cn(
+                      "drop-shadow-[0_0_8px_rgba(153,27,27,0.8)]",
+                      pin.isReferenced ? "text-[var(--brand-red)]" : "text-white/40"
+                    )} 
+                    fill="currentColor" 
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center text-white text-[10px] font-bold pb-1">
+                    {pin.index + 1}
+                  </span>
+                  {/* Delete button on hover */}
+                  {(selected || isPinMode) && (
+                    <button
+                      onClick={(e) => handleRemovePin(e, pin.id)}
+                      className="absolute -top-2 -right-2 bg-black border border-white/20 rounded-full p-0.5 opacity-0 group-hover/pin:opacity-100 transition-opacity hover:bg-red-600"
+                    >
+                      <X size={8} className="text-white" />
+                    </button>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            ))}
 
             <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
               <span className="text-[8px] text-white font-bold uppercase tracking-widest bg-black/60 px-2 py-1 rounded backdrop-blur-sm border border-white/10">
-                {isSemiSelected ? "Click Pin to Insert" : "CTRL + Click to Pin"}
+                {isPinMode ? "Click to Pin" : "CTRL + Click to Pin"}
               </span>
             </div>
           </div>
@@ -396,18 +408,9 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
           </div>
         )}
 
-        {/* Prompt Input Component */}
-        <PromptInput 
-          nodeId={id}
-          value={data.prompt}
-          onChange={(val) => updateNodeData(id, { prompt: val })}
-          referencedPins={data.referencedPins || []}
-          parentNode={data.parentId ? nodes.find(n => n.id === data.parentId) || null : null}
-        />
-
         {/* Type Selector */}
-        <div className="flex items-center gap-2 pt-2 border-t border-[var(--app-border)]">
-          {(['text', 'image', 'video'] as NodeType[]).map((t) => (
+        <div className="flex items-center gap-2">
+          {(['none', 'text', 'image', 'video'] as NodeType[]).map((t) => (
             <button
               key={t}
               onClick={() => updateNodeData(id, { type: t })}
@@ -422,11 +425,34 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
             </button>
           ))}
         </div>
+
+        {/* Prompt Input Component */}
+        <div className="pt-4 border-t border-[var(--app-border)]">
+          <PromptInput 
+            nodeId={id}
+            value={data.prompt}
+            onChange={(val) => updateNodeData(id, { prompt: val })}
+            referencedPins={data.referencedPins || []}
+            parentNode={data.parentId ? nodes.find(n => n.id === data.parentId) || null : null}
+            nodeType={data.type}
+            config={data.config || {}}
+            availableModels={availableModels}
+            currentModel={currentModel}
+          />
+        </div>
       </div>
 
       {/* Handles */}
-      <Handle type="target" position={Position.Left} className="w-2 h-2" />
-      <Handle type="source" position={Position.Right} className="w-2 h-2" />
+      <Handle 
+        type="target" 
+        position={Position.Left} 
+        className="w-3 h-3 bg-[var(--app-border)] border-2 border-[var(--app-panel)] hover:w-5 hover:h-5 hover:bg-[var(--brand-red)] hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all duration-300" 
+      />
+      <Handle 
+        type="source" 
+        position={Position.Right} 
+        className="w-3 h-3 bg-[var(--app-border)] border-2 border-[var(--app-panel)] hover:w-5 hover:h-5 hover:bg-[var(--brand-red)] hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all duration-300" 
+      />
 
       <MaskModal 
         isOpen={isMaskModalOpen}
