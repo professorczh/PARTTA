@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, 
@@ -14,11 +14,13 @@ import {
   AlertCircle,
   Save,
   Loader2,
-  ChevronDown
+  ChevronDown,
+  RotateCcw
 } from 'lucide-react';
 import { useTapStore, ProviderConfig, ModelConfig, ProviderType } from '../store';
 import { aiService } from '../services/aiService';
 import { clsx } from 'clsx';
+import { ConfirmDialog, Toast } from './UI';
 
 interface ModelsModalProps {
   isOpen: boolean;
@@ -26,11 +28,44 @@ interface ModelsModalProps {
 }
 
 export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
-  const { providers, addProvider, updateProvider, removeProvider, globalDefaults, setGlobalDefault, setGlobalMock } = useTapStore();
-  const [selectedProviderId, setSelectedProviderId] = useState<string | 'global-settings'>(providers[0]?.id || 'global-settings');
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const { 
+    providers: storeProviders, 
+    addProvider: storeAddProvider, 
+    updateProvider: storeUpdateProvider, 
+    removeProvider: storeRemoveProvider, 
+    globalDefaults: storeGlobalDefaults, 
+    setGlobalDefault: storeSetGlobalDefault, 
+    setGlobalMock: storeSetGlobalMock 
+  } = useTapStore();
 
-  const selectedProvider = providers.find(p => p.id === selectedProviderId);
+  // Local state for editing
+  const [localProviders, setLocalProviders] = useState<ProviderConfig[]>([]);
+  const [localGlobalDefaults, setLocalGlobalDefaults] = useState(storeGlobalDefaults);
+  
+  const [selectedProviderId, setSelectedProviderId] = useState<string | 'global-settings'>('global-settings');
+  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
+
+  // Dialog states
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
+
+  // Initialize local state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setLocalProviders(JSON.parse(JSON.stringify(storeProviders)));
+      setLocalGlobalDefaults({ ...storeGlobalDefaults });
+      setSelectedProviderId('global-settings');
+    }
+  }, [isOpen, storeProviders, storeGlobalDefaults]);
+
+  const hasChanges = useMemo(() => {
+    return JSON.stringify(localProviders) !== JSON.stringify(storeProviders) ||
+           JSON.stringify(localGlobalDefaults) !== JSON.stringify(storeGlobalDefaults);
+  }, [localProviders, storeProviders, localGlobalDefaults, storeGlobalDefaults]);
+
+  const selectedProvider = localProviders.find(p => p.id === selectedProviderId);
 
   const handleAddProvider = () => {
     const id = `provider-${Date.now()}`;
@@ -45,7 +80,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
         { id: 'gpt-4o', name: 'GPT-4o', capabilities: { text: true, vision: true, image: false, video: false } }
       ]
     };
-    addProvider(newProvider);
+    setLocalProviders([...localProviders, newProvider]);
     setSelectedProviderId(id);
   };
 
@@ -65,11 +100,72 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
         { id: 'seedance2-5s', name: 'Seedance 5s (Video)', capabilities: { text: false, vision: false, image: false, video: true } },
       ]
     };
-    addProvider(newProvider);
+    setLocalProviders([...localProviders, newProvider]);
     setSelectedProviderId(id);
   };
 
-  const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
+  const handleUpdateProvider = (id: string, updates: Partial<ProviderConfig>) => {
+    setLocalProviders(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+  };
+
+  const handleRemoveProvider = (id: string) => {
+    setLocalProviders(prev => prev.filter(p => p.id !== id));
+    if (selectedProviderId === id) {
+      setSelectedProviderId('global-settings');
+    }
+    setConfirmRemoveId(null);
+  };
+
+  const handleSetGlobalDefault = (type: 'text' | 'image' | 'video', value: string) => {
+    setLocalGlobalDefaults(prev => ({ ...prev, [type]: value }));
+  };
+
+  const handleSetGlobalMock = (enabled: boolean) => {
+    setLocalGlobalDefaults(prev => ({ ...prev, isGlobalMock: enabled }));
+  };
+
+  const handleSave = () => {
+    // Commit all local changes to store
+    // This is a bit brute force but works with the current store structure
+    // In a real app we might have a single 'saveProviders' action
+    
+    // 1. Update providers
+    // First remove ones that are gone
+    const currentStoreIds = storeProviders.map(p => p.id);
+    const localIds = localProviders.map(p => p.id);
+    currentStoreIds.forEach(id => {
+      if (!localIds.includes(id)) storeRemoveProvider(id);
+    });
+
+    // Then update/add
+    localProviders.forEach(p => {
+      const existing = storeProviders.find(sp => sp.id === p.id);
+      if (existing) {
+        storeUpdateProvider(p.id, p);
+      } else {
+        storeAddProvider(p);
+      }
+    });
+
+    // 2. Update defaults
+    storeSetGlobalDefault('text', localGlobalDefaults.text);
+    storeSetGlobalDefault('image', localGlobalDefaults.image);
+    storeSetGlobalDefault('video', localGlobalDefaults.video);
+    storeSetGlobalMock(localGlobalDefaults.isGlobalMock);
+
+    setShowSaveToast(true);
+    setTimeout(() => {
+      onClose();
+    }, 1000);
+  };
+
+  const handleCloseAttempt = () => {
+    if (hasChanges) {
+      setShowUnsavedConfirm(true);
+    } else {
+      onClose();
+    }
+  };
 
   const handleTestProvider = async (provider: ProviderConfig) => {
     setTestStatus(prev => ({ ...prev, [provider.id]: 'loading' }));
@@ -88,7 +184,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     }
   };
   const handleAddModel = (providerId: string) => {
-    const provider = providers.find(p => p.id === providerId);
+    const provider = localProviders.find(p => p.id === providerId);
     if (!provider) return;
 
     const newModel: ModelConfig = {
@@ -98,7 +194,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
       isCustom: true
     };
 
-    updateProvider(providerId, {
+    handleUpdateProvider(providerId, {
       models: [...provider.models, newModel]
     });
   };
@@ -117,7 +213,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
           className="fixed inset-0 z-[1000] flex items-center justify-center p-4 md:p-12"
         >
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={handleCloseAttempt} />
 
           {/* Modal Container */}
           <motion.div
@@ -139,7 +235,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                 </div>
               </div>
               <button 
-                onClick={onClose}
+                onClick={handleCloseAttempt}
                 className="p-2 hover:bg-white/10 rounded-full transition-colors"
               >
                 <X size={20} />
@@ -166,7 +262,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
 
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
                   <div className="px-3 py-2 text-[8px] uppercase tracking-[0.2em] text-[var(--app-text-muted)] font-bold">Providers</div>
-                  {providers.map(p => (
+                  {localProviders.map(p => (
                     <button
                       key={p.id}
                       onClick={() => setSelectedProviderId(p.id)}
@@ -199,6 +295,12 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                   >
                     <Plus size={14} /> Add Provider
                   </button>
+                  <button 
+                    onClick={handleAdd12AI}
+                    className="w-full mt-2 py-2 px-4 rounded-xl bg-emerald-500/5 border border-dashed border-emerald-500/20 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500"
+                  >
+                    <Zap size={14} /> Add 12AI Preset
+                  </button>
                 </div>
               </aside>
 
@@ -215,15 +317,15 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/5 border border-white/10">
                           <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">Global System Mock</span>
                           <button 
-                            onClick={() => setGlobalMock(!globalDefaults.isGlobalMock)}
+                            onClick={() => handleSetGlobalMock(!localGlobalDefaults.isGlobalMock)}
                             className={clsx(
                               "w-10 h-5 rounded-full relative transition-all",
-                              globalDefaults.isGlobalMock ? "bg-blue-500" : "bg-zinc-700"
+                              localGlobalDefaults.isGlobalMock ? "bg-blue-500" : "bg-zinc-700"
                             )}
                           >
                             <div className={clsx(
                               "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                              globalDefaults.isGlobalMock ? "right-1" : "left-1"
+                              localGlobalDefaults.isGlobalMock ? "right-1" : "left-1"
                             )} />
                           </button>
                         </div>
@@ -237,12 +339,12 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             </label>
                             <div className="relative group">
                               <select
-                                value={globalDefaults[type]}
-                                onChange={(e) => setGlobalDefault(type, e.target.value)}
+                                value={localGlobalDefaults[type]}
+                                onChange={(e) => handleSetGlobalDefault(type, e.target.value)}
                                 className="w-full bg-[#1a1a1a] border border-[var(--app-border)] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[var(--brand-red)] transition-all appearance-none"
                               >
                                 <option value="" className="bg-[#1a1a1a]">Not Set</option>
-                                {providers.filter(p => p.enabled).map(p => (
+                                {localProviders.filter(p => p.enabled).map(p => (
                                   <optgroup key={p.id} label={p.name} className="bg-[#1a1a1a] text-[var(--app-text-muted)]">
                                     {p.models.filter(m => m.capabilities[type === 'text' ? 'text' : type]).map(m => (
                                       <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`} className="bg-[#1a1a1a] text-white">
@@ -293,7 +395,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                           </button>
                           <div className="h-4 w-px bg-white/10 mx-1" />
                           <button 
-                            onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
+                            onClick={() => handleUpdateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
                             className={clsx(
                               "px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest transition-all",
                               selectedProvider.enabled ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-500 border border-zinc-700"
@@ -310,7 +412,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                           <input 
                             type="text"
                             value={selectedProvider.name}
-                            onChange={(e) => updateProvider(selectedProvider.id, { name: e.target.value })}
+                            onChange={(e) => handleUpdateProvider(selectedProvider.id, { name: e.target.value })}
                             disabled={selectedProvider.id === 'system-mock'}
                             className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[var(--brand-red)] transition-all disabled:opacity-50"
                             placeholder="e.g. 12AI Aggregator"
@@ -325,7 +427,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                           ) : (
                             <select 
                               value={selectedProvider.type}
-                              onChange={(e) => updateProvider(selectedProvider.id, { type: e.target.value as ProviderType })}
+                              onChange={(e) => handleUpdateProvider(selectedProvider.id, { type: e.target.value as ProviderType })}
                               className="w-full bg-[#1a1a1a] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[var(--brand-red)] transition-all appearance-none"
                             >
                               <option value="gemini" className="bg-[#1a1a1a] text-white">Google Gemini (Native)</option>
@@ -341,7 +443,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                           <input 
                             type="text"
                             value={selectedProvider.baseUrl}
-                            onChange={(e) => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
+                            onChange={(e) => handleUpdateProvider(selectedProvider.id, { baseUrl: e.target.value })}
                             className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all"
                             placeholder="https://api.example.com/v1"
                           />
@@ -355,7 +457,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             <input 
                               type={showKey[selectedProvider.id] ? "text" : "password"}
                               value={selectedProvider.apiKey}
-                              onChange={(e) => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
+                              onChange={(e) => handleUpdateProvider(selectedProvider.id, { apiKey: e.target.value })}
                               className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all pr-12"
                               placeholder="sk-••••••••••••••••••••••••"
                             />
@@ -401,7 +503,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                   onChange={(e) => {
                                     const newModels = [...selectedProvider.models];
                                     newModels[mIdx] = { ...model, name: e.target.value };
-                                    updateProvider(selectedProvider.id, { models: newModels });
+                                    handleUpdateProvider(selectedProvider.id, { models: newModels });
                                   }}
                                   className="bg-transparent border-none p-0 text-xs font-bold focus:outline-none focus:ring-0 w-32"
                                   placeholder="Model Name"
@@ -413,7 +515,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                   onChange={(e) => {
                                     const newModels = [...selectedProvider.models];
                                     newModels[mIdx] = { ...model, id: e.target.value };
-                                    updateProvider(selectedProvider.id, { models: newModels });
+                                    handleUpdateProvider(selectedProvider.id, { models: newModels });
                                   }}
                                   className="bg-transparent border-none p-0 text-[10px] font-mono text-[var(--app-text-muted)] focus:outline-none focus:ring-0 flex-1"
                                   placeholder="model-id-v1"
@@ -432,7 +534,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                           ...model, 
                                           capabilities: { ...model.capabilities, [cap]: !model.capabilities[cap] } 
                                         };
-                                        updateProvider(selectedProvider.id, { models: newModels });
+                                        handleUpdateProvider(selectedProvider.id, { models: newModels });
                                       }}
                                       className={clsx(
                                         "px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-tighter transition-all border",
@@ -451,7 +553,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             <button 
                               onClick={() => {
                                 const newModels = selectedProvider.models.filter((_, i) => i !== mIdx);
-                                updateProvider(selectedProvider.id, { models: newModels });
+                                handleUpdateProvider(selectedProvider.id, { models: newModels });
                               }}
                               className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                             >
@@ -474,10 +576,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              if (window.confirm('Are you sure you want to remove this provider? This action cannot be undone.')) {
-                                removeProvider(selectedProvider.id);
-                                setSelectedProviderId('global-settings');
-                              }
+                              setConfirmRemoveId(selectedProvider.id);
                             }}
                             className="px-4 py-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-2"
                           >
@@ -506,14 +605,55 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
               <div className="flex items-center gap-2 text-[9px] text-[var(--app-text-muted)] uppercase font-mono">
                 <ShieldCheck size={12} className="text-emerald-500" /> End-to-end local encryption active
               </div>
-              <button 
-                onClick={onClose}
-                className="flex items-center gap-2 px-6 py-2 rounded-xl bg-[var(--brand-red)] text-white text-[10px] font-bold uppercase tracking-widest hover:opacity-90 transition-all"
-              >
-                <Save size={14} /> Save Changes
-              </button>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={handleCloseAttempt}
+                  className="px-6 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-white/5 transition-all flex items-center gap-2"
+                >
+                  <RotateCcw size={14} /> Cancel
+                </button>
+                <button 
+                  onClick={handleSave}
+                  disabled={!hasChanges}
+                  className={clsx(
+                    "flex items-center gap-2 px-6 py-2 rounded-xl text-white text-[10px] font-bold uppercase tracking-widest transition-all",
+                    hasChanges ? "bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-900/20" : "bg-zinc-800 text-zinc-500 opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <Save size={14} /> Save Changes
+                </button>
+              </div>
             </footer>
           </motion.div>
+
+          {/* Dialogs & Toasts */}
+          <ConfirmDialog
+            isOpen={!!confirmRemoveId}
+            title="Remove Provider"
+            message="Are you sure you want to remove this provider? This action cannot be undone and all associated configurations will be lost."
+            confirmLabel="Remove"
+            onConfirm={() => confirmRemoveId && handleRemoveProvider(confirmRemoveId)}
+            onCancel={() => setConfirmRemoveId(null)}
+            variant="danger"
+          />
+
+          <ConfirmDialog
+            isOpen={showUnsavedConfirm}
+            title="Unsaved Changes"
+            message="You have unsaved changes. Are you sure you want to leave without saving?"
+            confirmLabel="Discard Changes"
+            cancelLabel="Keep Editing"
+            onConfirm={onClose}
+            onCancel={() => setShowUnsavedConfirm(false)}
+            variant="warning"
+          />
+
+          <Toast
+            isVisible={showSaveToast}
+            message="Settings saved successfully"
+            onClose={() => setShowSaveToast(false)}
+            type="success"
+          />
         </motion.div>
       )}
     </AnimatePresence>
