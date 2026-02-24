@@ -1,0 +1,113 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Oswald:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Oswald", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Base Colors */
+  --app-bg: #0a0a0a;
+  --app-text: #ffffff;
+  --app-text-muted: #a3a3a3;
+  --app-border: #262626;
+  --app-panel: rgba(23, 23, 23, 0.95);
+
+  /* HUD Colors */
+  --hud-red: #991b1b;
+  --hud-red-glow: rgba(220, 38, 38, 0.6);
+  --brand-red: #dc2626;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 100%;
+  }
+
+  body {
+    @apply bg-[var(--app-bg)] text-[var(--app-text)] font-sans antialiased;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--app-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--app-text-muted);
+  }
+}
+
+.hud-border {
+  border: 1px solid var(--hud-red);
+  box-shadow: 0 0 10px var(--hud-red-glow);
+}
+
+.glass-panel {
+  background: var(--app-panel);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--app-border);
+}
+
+.node-selected {
+  border-color: var(--brand-red) !important;
+  box-shadow: 0 0 15px var(--hud-red-glow) !important;
+}
+
+.node-semi-selected {
+  border-style: dashed !important;
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.1) !important;
+}
+
+.edge-emphasized path {
+  stroke: var(--brand-red) !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: 5;
+  animation: dashdraw 0.5s linear infinite;
+  filter: drop-shadow(0 0 5px var(--hud-red-glow));
+}
+
+@keyframes dashdraw {
+  from { stroke-dashoffset: 10; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* React Flow Customizations */
+.react-flow__node {
+  border-radius: 12px;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  background: var(--app-panel);
+  color: var(--app-text);
+}
+
+.react-flow__edge-path {
+  stroke: var(--app-border);
+  stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--brand-red);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 5px var(--hud-red-glow));
+}
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--app-text-muted);
+  border: 2px solid var(--app-bg);
+}
+
+.react-flow__handle:hover {
+  background: var(--brand-red);
+}

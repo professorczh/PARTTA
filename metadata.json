@@ -1,0 +1,9 @@
+{
+  "name": "PARTTA",
+  "description": "An AI-native creative canvas for multi-model orchestration, featuring infinite canvas, node-based workflows, and precise visual editing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
