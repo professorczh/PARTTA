@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { NodeData, useTapStore, Pin, NodeType, TapNode, ProviderConfig, ModelConfig } from './store';
-import { Play, Image as ImageIcon, Video, Type, MapPin, Loader2, Scissors, X, ChevronDown, Pin as PinIcon } from 'lucide-react';
+import { Play, Image as ImageIcon, Video, Type, MapPin, Loader2, Scissors, X, ChevronDown, Pin as PinIcon, Hash } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useEffect } from 'react';
@@ -29,7 +29,28 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
   const isPinMode = useTapStore((state) => state.isPinMode);
   const setPinMode = useTapStore((state) => state.setPinMode);
   
+  const [hoveredPort, setHoveredPort] = useState<string | null>(null);
   const imageRef = useRef<HTMLDivElement>(null);
+
+  const activeOutputMode = data.activeOutputMode || 'text';
+  const currentOutput = data.outputs?.[activeOutputMode];
+
+  // Port Status Logic
+  const getPortStatus = (portType: 'text' | 'image' | 'video' | 'prompt') => {
+    const hasContent = !!data.outputs?.[portType];
+    if (!hasContent) return 'gray';
+
+    // If a child node is selected, check if it's stale relative to this port
+    if (selectedNode) {
+      const lastUsedVersion = selectedNode.data.lastRunVersions?.[id]?.[portType];
+      const currentVersion = data.outputVersions?.[portType] || 0;
+      if (lastUsedVersion !== undefined && currentVersion > lastUsedVersion) {
+        return 'orange';
+      }
+    }
+    
+    return 'green';
+  };
 
   // CTRL key listener for PIN mode
   useEffect(() => {
@@ -123,21 +144,30 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
     updateNodeData(id, { isLoading: true });
 
     try {
-      // 1. Resolve references (Pins/Nodes)
+      // 1. Resolve references (Pins/Nodes/Ports)
       const images: { data: string; mimeType: string }[] = [];
       
+      // Track versions used for this run
+      const runVersions: NonNullable<NodeData['lastRunVersions']> = {
+        '__self__': { prompt: data.outputVersions?.prompt || 0 }
+      };
+
       // Find all @IMG_n references in prompt
-      const matches = data.prompt.matchAll(/@IMG_(\d+)(?:_PIN_(\d+))?/g);
+      const matches = data.prompt.matchAll(/@IMG_(\d+)(?:_(TEXT|IMAGE|PROMPT))?/g);
       for (const match of matches) {
         const shortId = `IMG_${match[1]}`;
+        const portType = (match[2] || 'IMAGE').toLowerCase() as 'text' | 'image' | 'prompt';
         const targetNode = nodes.find(n => n.data.shortId === shortId);
-        if (targetNode?.data.output && targetNode.data.type === 'image') {
-          // In a real app, we might crop the pin area here
-          // For now, we send the whole image as context
-          images.push({ 
-            data: targetNode.data.output, 
-            mimeType: 'image/png' // Assuming PNG for now
-          });
+        
+        if (targetNode) {
+          // Store version used
+          if (!runVersions[targetNode.id]) runVersions[targetNode.id] = {};
+          runVersions[targetNode.id][portType] = targetNode.data.outputVersions?.[portType] || 0;
+
+          const content = targetNode.data.outputs?.[portType];
+          if (content && portType === 'image') {
+            images.push({ data: content, mimeType: 'image/png' });
+          }
         }
       }
 
@@ -156,9 +186,29 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
         return;
       }
 
+      // 3. Update specific output slot and version
+      const newOutputs = { ...(data.outputs || {}) };
+      const newVersions = { 
+        text: 0, image: 0, video: 0, prompt: 0,
+        ...(data.outputVersions || {}) 
+      };
+      
+      if (activeOutputMode === 'image') {
+        newOutputs.image = response.imageUrl;
+        newVersions.image++;
+      } else if (activeOutputMode === 'video') {
+        newOutputs.video = response.imageUrl; // Mock video
+        newVersions.video++;
+      } else {
+        newOutputs.text = response.text;
+        newVersions.text++;
+      }
+
       updateNodeData(id, { 
         isLoading: false, 
-        output: response.imageUrl || response.text 
+        outputs: newOutputs,
+        outputVersions: newVersions,
+        lastRunVersions: runVersions
       });
     } catch (err: any) {
       console.error(err);
@@ -205,7 +255,10 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
             prompt: `@${data.shortId}_PIN_1 `,
             parentId: id,
             pins: [],
-            referencedPins: [newPinId]
+            referencedPins: [newPinId],
+            outputs: { text: '', image: '', video: '', prompt: '' },
+            outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
+            activeOutputMode: 'image'
           }
         });
 
@@ -260,7 +313,10 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
         prompt: ``,
         parentId: id,
         pins: [],
-        config: { mask: maskBase64 }
+        config: { mask: maskBase64 },
+        outputs: { text: '', image: '', video: '', prompt: '' },
+        outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
+        activeOutputMode: 'image'
       }
     });
 
@@ -274,31 +330,84 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
 
   return (
     <div className={cn(
-      "w-80 flex flex-col glass-panel rounded-2xl overflow-hidden transition-all duration-500",
+      "w-80 flex flex-col glass-panel rounded-2xl transition-all duration-500 relative",
       selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl shadow-red-900/20 scale-[1.02]",
       isSemiSelected && "node-semi-selected"
     )}>
+      {/* Side Ports System */}
+      <div className="absolute -right-12 top-0 bottom-0 w-10 flex flex-col z-50 pointer-events-auto">
+        {/* Output Ports (Aligned with Preview) */}
+        <div className="absolute top-24 flex flex-col gap-4">
+          {(['text', 'image', 'video'] as const).map((type) => {
+            const status = getPortStatus(type);
+            const Icon = type === 'text' ? Type : type === 'image' ? ImageIcon : Video;
+            return (
+              <div key={`out-${type}`} className="relative group/port nodrag nopan">
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center border transition-all duration-300 bg-black/80 backdrop-blur-sm",
+                  status === 'green' ? "border-emerald-500/50 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.3)]" :
+                  status === 'orange' ? "border-orange-500/50 text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.3)]" :
+                  "border-white/10 text-white/40 hover:text-white hover:border-white/20"
+                )}>
+                  <Icon size={14} />
+                </div>
+                <Handle 
+                  type="source" 
+                  position={Position.Right} 
+                  id={`output-${type}`}
+                  className="!w-full !h-full !absolute !inset-0 !bg-transparent !border-none !opacity-0 z-10 cursor-crosshair pointer-events-auto" 
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Input Ports (Aligned with Prompt Area) */}
+        <div className="absolute bottom-12 flex flex-col gap-4">
+          {(['prompt', 'image', 'video'] as const).map((type) => {
+            const hasContent = type === 'prompt' ? !!data.prompt : !!data.inputs?.[type];
+            const Icon = type === 'prompt' ? Hash : type === 'image' ? ImageIcon : Video;
+            return (
+              <div key={`in-${type}`} className="relative group/port nodrag nopan">
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center border transition-all duration-300 bg-black/80 backdrop-blur-sm",
+                  hasContent ? "border-blue-500/50 text-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.3)]" :
+                  "border-white/10 text-white/40 hover:text-white hover:border-white/20"
+                )}>
+                  <Icon size={14} />
+                </div>
+                <Handle 
+                  type="target" 
+                  position={Position.Right} 
+                  id={`input-${type}`}
+                  className="!w-full !h-full !absolute !inset-0 !bg-transparent !border-none !opacity-0 z-10 cursor-crosshair pointer-events-auto" 
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Header */}
       <div className="bg-[var(--app-panel)] px-4 py-3 flex items-center justify-between border-b border-[var(--app-border)]">
         <div className="flex items-center gap-2">
           <div className={cn(
             "p-1.5 rounded-lg",
-            data.type === 'image' ? "bg-blue-500/20 text-blue-400" :
-            data.type === 'video' ? "bg-purple-500/20 text-purple-400" :
+            activeOutputMode === 'image' ? "bg-blue-500/20 text-blue-400" :
+            activeOutputMode === 'video' ? "bg-purple-500/20 text-purple-400" :
             "bg-emerald-500/20 text-emerald-400"
           )}>
-            {data.type === 'none' && <div className="w-3.5 h-3.5 rounded-full border border-current opacity-40" />}
-            {data.type === 'text' && <Type size={14} />}
-            {data.type === 'image' && <ImageIcon size={14} />}
-            {data.type === 'video' && <Video size={14} />}
+            {activeOutputMode === 'text' && <Type size={14} />}
+            {activeOutputMode === 'image' && <ImageIcon size={14} />}
+            {activeOutputMode === 'video' && <Video size={14} />}
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] font-display uppercase tracking-widest font-bold">{data.label}</span>
             <span className="text-[8px] font-mono text-[var(--app-text-muted)]">{data.shortId}</span>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {data.type === 'image' && (
+        <div className="flex items-center gap-1 mr-8">
+          {activeOutputMode === 'image' && (
             <button 
               onClick={(e) => { e.stopPropagation(); setPinMode(!isPinMode); }}
               className={cn(
@@ -310,7 +419,7 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
               <PinIcon size={14} />
             </button>
           )}
-          {data.output && data.type === 'image' && (
+          {currentOutput && activeOutputMode === 'image' && (
             <button 
               onClick={() => setIsMaskModalOpen(true)}
               className="p-1.5 hover:bg-[var(--app-border)] rounded-lg transition-all text-[var(--app-text-muted)] hover:text-white"
@@ -334,100 +443,96 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
       </div>
 
       {/* Content */}
-      <div className="p-4 flex flex-col gap-4">
-        {/* Output Preview */}
-        {data.output ? (
-          <div 
-            ref={imageRef}
-            className="relative w-full aspect-video bg-black rounded-xl overflow-hidden group cursor-crosshair shadow-inner"
-            onClick={handleImageClick}
-          >
-            {data.type === 'image' ? (
-              <img 
-                src={data.output} 
-                alt="Output" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            ) : data.type === 'video' ? (
-              <video src={data.output} className="w-full h-full object-cover" autoPlay loop muted />
-            ) : (
-              <div className="p-3 text-xs font-mono overflow-auto h-full bg-[#050505]">{data.output}</div>
-            )}
-
-            {/* Pins Logic */}
-            {pinsData.map((pin) => (
-              <div 
-                key={pin.id}
-                className={cn(
-                  "absolute w-6 h-6 -ml-3 -mt-3 flex items-center justify-center transition-all hover:scale-125 group/pin cursor-pointer z-20",
-                  pin.isGhost ? "opacity-30 grayscale-[0.5] hover:opacity-100 hover:grayscale-0" : "opacity-100"
-                )}
-                style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-                onClick={(e) => handlePinClick(e, pin.id)}
-              >
-                <div className="relative">
-                  <MapPin 
-                    size={24} 
-                    className={cn(
-                      "drop-shadow-[0_0_8px_rgba(153,27,27,0.8)]",
-                      pin.isReferenced ? "text-[var(--brand-red)]" : "text-white/40"
-                    )} 
-                    fill="currentColor" 
-                  />
-                  <span className="absolute inset-0 flex items-center justify-center text-white text-[10px] font-bold pb-1">
-                    {pin.index + 1}
-                  </span>
-                  {/* Delete button on hover */}
-                  {(selected || isPinMode) && (
-                    <button
-                      onClick={(e) => handleRemovePin(e, pin.id)}
-                      className="absolute -top-2 -right-2 bg-black border border-white/20 rounded-full p-0.5 opacity-0 group-hover/pin:opacity-100 transition-opacity hover:bg-red-600"
-                    >
-                      <X size={8} className="text-white" />
-                    </button>
+      <div className="flex flex-col">
+        {/* Output Area (Top) */}
+        <div className="p-4 border-b border-[var(--app-border)] relative">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1">
+              {(['text', 'image', 'video'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => updateNodeData(id, { activeOutputMode: mode })}
+                  className={cn(
+                    "px-2 py-1 rounded text-[8px] font-bold uppercase tracking-tighter transition-all",
+                    activeOutputMode === mode 
+                      ? "bg-white/10 text-white" 
+                      : "text-[var(--app-text-muted)] hover:text-white"
                   )}
-                </div>
-              </div>
-            ))}
-
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-              <span className="text-[8px] text-white font-bold uppercase tracking-widest bg-black/60 px-2 py-1 rounded backdrop-blur-sm border border-white/10">
-                {isPinMode ? "Click to Pin" : "CTRL + Click to Pin"}
-              </span>
+                >
+                  {mode}
+                </button>
+              ))}
             </div>
           </div>
-        ) : (
-          <div className="w-full aspect-video bg-[#050505] rounded-xl flex items-center justify-center border border-dashed border-[var(--app-border)] group">
-            <div className="flex flex-col items-center gap-2 opacity-30 group-hover:opacity-50 transition-opacity">
-              <Loader2 size={24} className={cn(data.isLoading && "animate-spin")} />
-              <span className="text-[10px] font-display uppercase tracking-widest">
-                {data.isLoading ? "Generating..." : "No Output"}
-              </span>
-            </div>
-          </div>
-        )}
 
-        {/* Type Selector */}
-        <div className="flex items-center gap-2">
-          {(['none', 'text', 'image', 'video'] as NodeType[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => updateNodeData(id, { type: t })}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[9px] font-display uppercase tracking-widest transition-all font-bold",
-                data.type === t 
-                  ? "bg-[var(--brand-red)] text-white shadow-lg shadow-red-900/40" 
-                  : "bg-[var(--app-panel)] text-[var(--app-text-muted)] hover:text-white border border-[var(--app-border)]"
-              )}
+          {currentOutput ? (
+            <div 
+              ref={imageRef}
+              className="relative w-full aspect-video bg-black rounded-xl overflow-hidden group cursor-crosshair shadow-inner"
+              onClick={handleImageClick}
             >
-              {t}
-            </button>
-          ))}
+              {activeOutputMode === 'image' ? (
+                <img 
+                  src={currentOutput} 
+                  alt="Output" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : activeOutputMode === 'video' ? (
+                <video src={currentOutput} className="w-full h-full object-cover" autoPlay loop muted />
+              ) : (
+                <div className="p-3 text-xs font-mono overflow-auto h-full bg-[#050505]">{currentOutput}</div>
+              )}
+
+              {/* Pins Logic */}
+              {activeOutputMode === 'image' && pinsData.map((pin) => (
+                <div 
+                  key={pin.id}
+                  className={cn(
+                    "absolute w-6 h-6 -ml-3 -mt-3 flex items-center justify-center transition-all hover:scale-125 group/pin cursor-pointer z-20",
+                    pin.isGhost ? "opacity-30 grayscale-[0.5] hover:opacity-100 hover:grayscale-0" : "opacity-100"
+                  )}
+                  style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+                  onClick={(e) => handlePinClick(e, pin.id)}
+                >
+                  <div className="relative">
+                    <MapPin 
+                      size={24} 
+                      className={cn(
+                        "drop-shadow-[0_0_8px_rgba(153,27,27,0.8)]",
+                        pin.isReferenced ? "text-[var(--brand-red)]" : "text-white/40"
+                      )} 
+                      fill="currentColor" 
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-[10px] font-bold pb-1">
+                      {pin.index + 1}
+                    </span>
+                    {(selected || isPinMode) && (
+                      <button
+                        onClick={(e) => handleRemovePin(e, pin.id)}
+                        className="absolute -top-2 -right-2 bg-black border border-white/20 rounded-full p-0.5 opacity-0 group-hover/pin:opacity-100 transition-opacity hover:bg-red-600"
+                      >
+                        <X size={8} className="text-white" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="w-full aspect-video bg-[#050505] rounded-xl flex items-center justify-center border border-dashed border-[var(--app-border)] group">
+              <div className="flex flex-col items-center gap-2 opacity-30 group-hover:opacity-50 transition-opacity">
+                <Loader2 size={24} className={cn(data.isLoading && "animate-spin")} />
+                <span className="text-[10px] font-display uppercase tracking-widest">
+                  {data.isLoading ? "Generating..." : "No Output"}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Prompt Input Component */}
-        <div className="pt-4 border-t border-[var(--app-border)]">
+        {/* Input Area (Bottom) */}
+        <div className="p-4">
           <PromptInput 
             nodeId={id}
             value={data.prompt}
@@ -442,22 +547,18 @@ export const CreativeNode = ({ id, data, selected }: NodeProps<TapNode>) => {
         </div>
       </div>
 
-      {/* Handles */}
+      {/* Main Input Handle */}
       <Handle 
         type="target" 
         position={Position.Left} 
-        className="w-3 h-3 bg-[var(--app-border)] border-2 border-[var(--app-panel)] hover:w-5 hover:h-5 hover:bg-[var(--brand-red)] hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all duration-300" 
-      />
-      <Handle 
-        type="source" 
-        position={Position.Right} 
+        id="input-main"
         className="w-3 h-3 bg-[var(--app-border)] border-2 border-[var(--app-panel)] hover:w-5 hover:h-5 hover:bg-[var(--brand-red)] hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all duration-300" 
       />
 
       <MaskModal 
         isOpen={isMaskModalOpen}
         onClose={() => setIsMaskModalOpen(false)}
-        imageUrl={data.output || ''}
+        imageUrl={currentOutput || ''}
         onSave={handleMaskSave}
       />
     </div>

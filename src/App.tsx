@@ -51,7 +51,10 @@ export default function App() {
         label: `Node ${nodes.length + 1}`, 
         type: 'image', 
         prompt: '',
-        pins: []
+        pins: [],
+        outputs: { text: '', image: '', video: '', prompt: '' },
+        outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
+        activeOutputMode: 'image'
       },
     });
   }, [nodes.length, addNode]);

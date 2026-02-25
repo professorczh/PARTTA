@@ -55,7 +55,27 @@ export interface NodeData extends Record<string, unknown> {
   label: string;
   type: NodeType;
   prompt: string;
-  output?: string; // URL or text
+  outputs: {
+    text?: string;
+    image?: string;
+    video?: string;
+    prompt?: string;
+  };
+  outputVersions: {
+    text: number;
+    image: number;
+    video: number;
+    prompt: number;
+  };
+  lastRunVersions?: {
+    [sourceNodeId: string]: {
+      text?: number;
+      image?: number;
+      video?: number;
+      prompt?: number;
+    };
+  };
+  activeOutputMode: 'text' | 'image' | 'video';
   shortId?: string; // e.g. IMG_1
   isLoading?: boolean;
   pins?: Pin[];
@@ -120,7 +140,10 @@ export const useTapStore = create<TapState>()(
             type: 'text', 
             prompt: 'A futuristic city with red neon lights',
             shortId: 'IMG_1',
-            pins: []
+            pins: [],
+            outputs: {},
+            outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
+            activeOutputMode: 'text'
           },
         },
       ],
@@ -169,8 +192,21 @@ export const useTapStore = create<TapState>()(
         });
       },
       onConnect: (connection: Connection) => {
+        const sourceHandle = connection.sourceHandle || '';
+        let color = '#ef4444'; // Default Red
+        
+        if (sourceHandle.includes('text')) color = '#3b82f6'; // Blue for text
+        if (sourceHandle.includes('image')) color = '#ef4444'; // Red for image
+        if (sourceHandle.includes('video')) color = '#a855f7'; // Purple for video
+        if (sourceHandle.includes('prompt')) color = '#3b82f6'; // Blue for prompt
+
+        const edge = {
+          ...connection,
+          style: { stroke: color, strokeWidth: 2 },
+          animated: true,
+        };
         set({
-          edges: addEdge(connection, get().edges),
+          edges: addEdge(edge, get().edges),
         });
       },
       setNodes: (nodes) => set({ nodes }),
@@ -185,9 +221,11 @@ export const useTapStore = create<TapState>()(
           data: {
             ...node.data,
             shortId,
+            outputs: node.data.outputs || {},
+            outputVersions: node.data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 },
+            activeOutputMode: node.data.activeOutputMode || 'text',
             config: {
               ...node.data.config,
-              // We don't force a model here, let the component resolve it from globalDefaults
               model: node.data.config?.model
             }
           }
@@ -196,9 +234,30 @@ export const useTapStore = create<TapState>()(
       },
       updateNodeData: (id, data) => {
         set({
-          nodes: get().nodes.map((node) => 
-            node.id === id ? { ...node, data: { ...node.data, ...data } } : node
-          ),
+          nodes: get().nodes.map((node) => {
+            if (node.id !== id) return node;
+            
+            const newData = { 
+              ...node.data, 
+              ...data,
+              outputs: node.data.outputs || {},
+              outputVersions: node.data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 }
+            };
+            
+            // If prompt changed, increment prompt version
+            if (data.prompt !== undefined && data.prompt !== node.data.prompt) {
+              newData.outputVersions = {
+                ...newData.outputVersions,
+                prompt: (newData.outputVersions?.prompt || 0) + 1
+              };
+              newData.outputs = {
+                ...newData.outputs,
+                prompt: data.prompt
+              };
+            }
+
+            return { ...node, data: newData };
+          }),
         });
       },
       addPin: (nodeId, pin) => {

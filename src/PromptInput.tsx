@@ -129,10 +129,26 @@ export const PromptInput = ({
     
     // 2. Other nodes' outputs
     nodes.filter(n => n.id !== nodeId && n.id !== parentNode?.id).forEach(n => {
+      // Add variants for each output port
       list.push({
         type: 'node',
         id: n.id,
-        label: `@${n.data.shortId}`,
+        port: 'PROMPT',
+        label: `@${n.data.shortId}_PROMPT`,
+        shortId: n.data.shortId
+      });
+      list.push({
+        type: 'node',
+        id: n.id,
+        port: 'TEXT',
+        label: `@${n.data.shortId}_TEXT`,
+        shortId: n.data.shortId
+      });
+      list.push({
+        type: 'node',
+        id: n.id,
+        port: 'IMAGE',
+        label: `@${n.data.shortId}_IMAGE`,
         shortId: n.data.shortId
       });
     });
@@ -201,8 +217,8 @@ export const PromptInput = ({
 
     // Only snap if it's a single cursor (not a range selection)
     if (start === end) {
-      // Regex to find tags: @IMG_n_PIN_m or @IMG_n
-      const tagRegex = /@IMG_\d+(?:_PIN_\d+)?/g;
+      // Regex to find tags: @IMG_n_PIN_m or @IMG_n_SUFFIX
+      const tagRegex = /@IMG_\d+(?:_PIN_\d+|_TEXT|_IMAGE|_PROMPT)?/g;
       let match;
       while ((match = tagRegex.exec(value)) !== null) {
         const tagStart = match.index;
@@ -242,17 +258,17 @@ export const PromptInput = ({
   };
 
   const renderContent = () => {
-    // Regex to match @IMG_n_PIN_m or @IMG_n
-    const parts = value.split(/(@IMG_\d+(?:_PIN_\d+)?)/g);
+    // Regex to match @IMG_n_PIN_m or @IMG_n_SUFFIX
+    const parts = value.split(/(@IMG_\d+(?:_PIN_\d+|_TEXT|_IMAGE|_PROMPT)?)/g);
     
     return parts.map((part, i) => {
       const pinMatch = part.match(/@IMG_(\d+)_PIN_(\d+)/);
-      const nodeMatch = part.match(/@IMG_(\d+)$/);
+      const nodeMatch = part.match(/@IMG_(\d+)(?:_(TEXT|IMAGE|PROMPT))?/);
       
       if (pinMatch || nodeMatch) {
         let isInvalid = false;
         let type: 'pin' | 'node' = 'node';
-        let label = part;
+        let port: string = 'IMAGE';
         let targetNode: any = null;
         let pinIdx = 0;
 
@@ -266,9 +282,22 @@ export const PromptInput = ({
         } else if (nodeMatch) {
           type = 'node';
           const imgNum = nodeMatch[1];
+          port = nodeMatch[2] || 'IMAGE';
           targetNode = nodes.find(n => n.data.shortId === `IMG_${imgNum}`);
-          isInvalid = !targetNode;
+          isInvalid = !targetNode || !targetNode.data.outputs?.[port.toLowerCase()];
+          
+          // Special case for PROMPT: it's always valid if node exists
+          if (port === 'PROMPT' && targetNode) isInvalid = false;
         }
+
+        const getTagColor = () => {
+          if (isInvalid) return "text-red-400 bg-red-500/10 border-red-500/20";
+          if (type === 'pin') return "text-blue-400 bg-blue-500/10 border-blue-500/20";
+          if (port === 'TEXT') return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+          if (port === 'IMAGE') return "text-red-400 bg-red-500/10 border-red-500/20";
+          if (port === 'PROMPT') return "text-blue-400 bg-blue-500/10 border-blue-500/20";
+          return "text-purple-400 bg-purple-500/10 border-purple-500/20";
+        };
 
         return (
           <span
@@ -278,16 +307,12 @@ export const PromptInput = ({
             {part}
             <span
               className={clsx(
-                "absolute inset-y-[-2px] left-1/2 -translate-x-1/2 px-1.5 rounded flex items-center gap-1 whitespace-nowrap pointer-events-auto cursor-pointer transition-all hover:brightness-110 z-20",
-                type === 'pin' 
-                  ? (isInvalid ? "bg-red-500/20 border border-red-500/40 text-red-400" : "bg-blue-500/20 border border-blue-500/40 text-blue-400")
-                  : (isInvalid ? "bg-red-500/20 border border-red-500/40 text-red-400" : "bg-purple-500/20 border border-purple-500/40 text-purple-400")
+                "absolute inset-y-[1px] left-0 right-0 px-1 rounded flex items-center gap-1 whitespace-nowrap pointer-events-auto cursor-pointer transition-all hover:brightness-125 z-20 border",
+                getTagColor()
               )}
               style={{ 
-                fontSize: '9px', 
-                fontWeight: 'bold',
-                // Ensure the chip is at least as wide as the text but can be slightly wider
-                minWidth: '100%' 
+                fontSize: '11px', 
+                fontWeight: '600',
               }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -309,15 +334,19 @@ export const PromptInput = ({
               }}
               onMouseLeave={() => setHoveredPin(null)}
             >
-              {type === 'pin' ? <MapPin size={10} fill="currentColor" /> : <ImageIcon size={10} />}
+              {type === 'pin' ? <MapPin size={10} fill="currentColor" /> : (
+                port === 'IMAGE' ? <ImageIcon size={10} /> : <Hash size={10} />
+              )}
               {part}
             </span>
           </span>
         );
       }
-      return <span key={i} className="text-white">{part}</span>;
+      return <span key={i} className="text-white/90">{part}</span>;
     });
   };
+
+  const node = nodes.find(n => n.id === nodeId) as TapNode | undefined;
 
   return (
     <div 
@@ -326,16 +355,29 @@ export const PromptInput = ({
       onClick={() => textareaRef.current?.focus()}
     >
       {/* Thumbnail Reference Bar */}
-      {referencedNodes.length > 0 && (
+      {(referencedNodes.length > 0 || ((node?.data.inputs as any)?.image)) && (
         <div className="flex items-center gap-2 pb-2 border-b border-white/5 overflow-x-auto no-scrollbar">
+          {/* Uploaded Image */}
+          {(node?.data.inputs as any)?.image && (
+            <div className="relative group/thumb flex-shrink-0">
+              <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-white/20 bg-black shadow-lg transition-all group-hover/thumb:border-white/40">
+                <img src={(node?.data.inputs as any)?.image as string} className="w-full h-full object-cover" alt="Upload" referrerPolicy="no-referrer" />
+                <div className="absolute top-0 left-0 bg-black/60 p-0.5 rounded-br">
+                  <ImageIcon size={8} className="text-white" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Referenced Nodes */}
           {referencedNodes.map((node, idx) => (
             <div key={node.id} className="relative group/thumb flex-shrink-0">
-              <div className="w-12 h-12 rounded-lg overflow-hidden border border-white/10 bg-black shadow-lg transition-all group-hover/thumb:border-[var(--brand-red)] group-hover/thumb:scale-105">
-                {node.data.output && node.data.type === 'image' ? (
-                  <img src={node.data.output} className="w-full h-full object-cover opacity-80 group-hover/thumb:opacity-100" alt="Ref" referrerPolicy="no-referrer" />
+              <div className="w-12 h-12 rounded-lg overflow-hidden border border-dashed border-white/20 bg-black shadow-lg transition-all group-hover/thumb:border-[var(--brand-red)] group-hover/thumb:scale-105">
+                {node.data.outputs?.image ? (
+                  <img src={node.data.outputs.image as string} className="w-full h-full object-cover opacity-80 group-hover/thumb:opacity-100" alt="Ref" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-[var(--app-text-muted)]">
-                    <ImageIcon size={16} />
+                    <Hash size={16} />
                   </div>
                 )}
                 <div className="absolute top-0 right-0 bg-black/80 text-white text-[8px] font-bold px-1 rounded-bl-lg border-l border-b border-white/10">
@@ -611,11 +653,13 @@ export const PromptInput = ({
                     idx === selectedIndex ? "bg-[var(--brand-red)]/40" : "hover:bg-[var(--brand-red)]/20"
                   )}
                 >
-                  {s.type === 'pin' ? <MapPin size={12} className="text-blue-400" /> : <ImageIcon size={12} className="text-purple-400" />}
+                  {s.type === 'pin' ? <MapPin size={12} className="text-blue-400" /> : (
+                    s.port === 'IMAGE' ? <ImageIcon size={12} className="text-red-400" /> : <Hash size={12} className="text-emerald-400" />
+                  )}
                   <div className="flex flex-col">
                     <span className="text-[10px] font-bold text-white">{s.label}</span>
                     <span className="text-[8px] text-[var(--app-text-muted)] group-hover:text-white/60">
-                      {s.type === 'pin' ? `Pin from ${s.shortId}` : `Output from ${s.shortId}`}
+                      {s.type === 'pin' ? `Pin from ${s.shortId}` : `${s.port} output from ${s.shortId}`}
                     </span>
                   </div>
                 </button>
@@ -685,11 +729,11 @@ export const PromptInput = ({
           >
             {(() => {
               const targetNode = nodes.find(n => n.id === hoveredPin.nodeId);
-              if (!targetNode?.data.output) return null;
+              if (!targetNode?.data.outputs?.image) return null;
               return (
                 <div className="w-48 aspect-video bg-black rounded-lg overflow-hidden border border-white/20 shadow-2xl ring-1 ring-black">
                   <img 
-                    src={targetNode.data.output} 
+                    src={targetNode.data.outputs?.image} 
                     className="w-full h-full object-cover opacity-60" 
                     alt="Preview"
                     referrerPolicy="no-referrer"
