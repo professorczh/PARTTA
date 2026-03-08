@@ -1,0 +1,46 @@
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.375rem;
+  margin: 0 0.125rem;
+  border-radius: 0.25rem;
+  background-color: rgba(255, 68, 68, 0.2); /* brand-red/20 */
+  color: #ff4444; /* brand-red */
+  font-weight: 500;
+  font-size: 0.75rem;
+  line-height: 1;
+  user-select: none;
+  cursor: default;
+  white-space: nowrap;
+}
+
+/* Hide the default mention suggestion list if we use our own */
+.tippy-box[data-theme~='mention'] {
+  background-color: transparent;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+
+/* Editor styles */
+.ProseMirror {
+  outline: none;
+  min-height: 100px;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem; /* text-xs */
+  line-height: 1.5;
+}
+
+.ProseMirror p {
+  margin: 0;
+}
+
+/* Placeholder */
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: rgba(255, 255, 255, 0.3);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

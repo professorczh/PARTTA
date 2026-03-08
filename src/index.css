@@ -7,11 +7,11 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Base Colors */
-  --app-bg: #0a0a0a;
+  --app-bg: #0f0f0f;
   --app-text: #ffffff;
-  --app-text-muted: #a3a3a3;
+  --app-text-muted: #737373;
   --app-border: #262626;
-  --app-panel: rgba(23, 23, 23, 0.95);
+  --app-panel: #171717;
 
   /* HUD Colors */
   --hud-red: #991b1b;
@@ -53,7 +53,6 @@
 
 .glass-panel {
   background: var(--app-panel);
-  backdrop-filter: blur(12px);
   border: 1px solid var(--app-border);
 }
 
@@ -104,14 +103,26 @@
 }
 
 .react-flow__edge-path {
-  stroke: var(--app-border);
+  stroke: rgba(255, 255, 255, 0.2);
   stroke-width: 2;
+  transition: stroke 0.3s, stroke-width 0.3s;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: var(--brand-red);
+  stroke: #3b82f6 !important;
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8)) !important;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: rgba(255, 255, 255, 0.6);
   stroke-width: 3;
-  filter: drop-shadow(0 0 5px var(--hud-red-glow));
+}
+
+.react-flow__connection-path {
+  stroke: #3b82f6 !important;
+  stroke-width: 2 !important;
+  stroke-dasharray: 5, 5 !important;
 }
 
 .react-flow__handle {

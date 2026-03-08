@@ -15,17 +15,152 @@ import {
   Save,
   Loader2,
   ChevronDown,
-  RotateCcw
+  RotateCcw,
+  GripVertical,
+  Power
 } from 'lucide-react';
 import { useTapStore, ProviderConfig, ModelConfig, ProviderType } from '../store';
 import { aiService } from '../services/aiService';
 import { clsx } from 'clsx';
 import { ConfirmDialog, Toast } from './UI';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface ModelsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+interface SortableModelItemProps {
+  model: ModelConfig;
+  globalIdx: number;
+  type: 'text' | 'image' | 'video';
+  selectedProvider: ProviderConfig;
+  handleUpdateProvider: (id: string, updates: Partial<ProviderConfig>) => void;
+}
+
+const SortableModelItem = ({ 
+  model, 
+  globalIdx, 
+  type, 
+  selectedProvider, 
+  handleUpdateProvider 
+}: SortableModelItemProps) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: `${selectedProvider.id}-${type}-${model.id}-${globalIdx}` });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div 
+      ref={setNodeRef}
+      style={style}
+      className={clsx(
+        "bg-white/5 border border-white/10 rounded-xl p-2 space-y-2 group relative transition-all",
+        !model.enabled && "opacity-40 grayscale-[0.5]"
+      )}
+    >
+      <div className="flex items-center gap-1.5">
+        <button 
+          {...attributes} 
+          {...listeners}
+          className="p-1 text-white/20 hover:text-white/40 cursor-grab active:cursor-grabbing"
+        >
+          <GripVertical size={12} />
+        </button>
+        
+        <button
+          onClick={() => {
+            const newModels = [...selectedProvider.models];
+            newModels[globalIdx] = { ...model, enabled: !model.enabled };
+            handleUpdateProvider(selectedProvider.id, { models: newModels });
+          }}
+          className={clsx(
+            "p-1 rounded-md transition-all",
+            model.enabled ? "text-emerald-500 hover:bg-emerald-500/10" : "text-white/20 hover:bg-white/10"
+          )}
+          title={model.enabled ? "Disable Model" : "Enable Model"}
+        >
+          <Power size={10} />
+        </button>
+
+        <select
+          disabled={selectedProvider.defaultProtocol !== 'mix'}
+          value={selectedProvider.defaultProtocol === 'mix' ? (model.protocol || 'openai-compatible') : selectedProvider.defaultProtocol}
+          onChange={(e) => {
+            const newModels = [...selectedProvider.models];
+            newModels[globalIdx] = { ...model, protocol: e.target.value as any };
+            handleUpdateProvider(selectedProvider.id, { models: newModels });
+          }}
+          className={clsx(
+            "bg-black/40 border border-white/10 rounded-md px-1 py-0.5 text-[9px] font-bold focus:outline-none transition-all",
+            selectedProvider.defaultProtocol === 'mix' ? "text-[var(--brand-red)] cursor-pointer" : "text-zinc-600 cursor-not-allowed opacity-50"
+          )}
+        >
+          <option value="openai-compatible">O</option>
+          <option value="gemini">G</option>
+        </select>
+        <input 
+          type="text"
+          value={model.id}
+          onChange={(e) => {
+            const newModels = [...selectedProvider.models];
+            newModels[globalIdx] = { ...model, id: e.target.value };
+            handleUpdateProvider(selectedProvider.id, { models: newModels });
+          }}
+          className="bg-transparent border-none p-0 text-[10px] font-mono text-white focus:outline-none focus:ring-0 flex-1 min-w-0"
+          placeholder="Model ID"
+        />
+        <button 
+          onClick={() => {
+            const newModels = selectedProvider.models.filter((_, i) => i !== globalIdx);
+            handleUpdateProvider(selectedProvider.id, { models: newModels });
+          }}
+          className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-500 transition-all"
+        >
+          <X size={10} />
+        </button>
+      </div>
+      <input 
+        type="text"
+        value={model.name}
+        onChange={(e) => {
+          const newModels = [...selectedProvider.models];
+          newModels[globalIdx] = { ...model, name: e.target.value };
+          handleUpdateProvider(selectedProvider.id, { models: newModels });
+        }}
+        className="w-full bg-transparent border-none p-0 text-[9px] text-[var(--app-text-muted)] italic focus:outline-none focus:ring-0 px-5"
+        placeholder="Display Name (Optional)"
+      />
+    </div>
+  );
+};
 
 export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   const { 
@@ -34,8 +169,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     updateProvider: storeUpdateProvider, 
     removeProvider: storeRemoveProvider, 
     globalDefaults: storeGlobalDefaults, 
-    setGlobalDefault: storeSetGlobalDefault, 
-    setGlobalMock: storeSetGlobalMock 
+    setGlobalDefault: storeSetGlobalDefault
   } = useTapStore();
 
   // Local state for editing
@@ -45,6 +179,17 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   const [selectedProviderId, setSelectedProviderId] = useState<string | 'global-settings'>('global-settings');
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const toggleKeyVisibility = (id: string) => {
+    setShowKey(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   // Dialog states
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
@@ -73,32 +218,11 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
       id,
       name: 'New Provider',
       type: 'openai-compatible',
+      defaultProtocol: 'openai-compatible',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: '',
       enabled: true,
-      models: [
-        { id: 'gpt-4o', name: 'GPT-4o', capabilities: { text: true, vision: true, image: false, video: false } }
-      ]
-    };
-    setLocalProviders([...localProviders, newProvider]);
-    setSelectedProviderId(id);
-  };
-
-  const handleAdd12AI = () => {
-    const id = `12ai-${Date.now()}`;
-    const newProvider: ProviderConfig = {
-      id,
-      name: '12AI Aggregator',
-      type: 'openai-compatible',
-      baseUrl: 'https://cdn.12ai.org',
-      apiKey: '',
-      enabled: true,
-      models: [
-        { id: 'gpt-4o', name: 'GPT-4o', capabilities: { text: true, vision: true, image: false, video: false } },
-        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', capabilities: { text: true, vision: true, image: false, video: false } },
-        { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Image', capabilities: { text: false, vision: false, image: true, video: false } },
-        { id: 'seedance2-5s', name: 'Seedance 5s (Video)', capabilities: { text: false, vision: false, image: false, video: true } },
-      ]
+      models: []
     };
     setLocalProviders([...localProviders, newProvider]);
     setSelectedProviderId(id);
@@ -118,10 +242,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
 
   const handleSetGlobalDefault = (type: 'text' | 'image' | 'video', value: string) => {
     setLocalGlobalDefaults(prev => ({ ...prev, [type]: value }));
-  };
-
-  const handleSetGlobalMock = (enabled: boolean) => {
-    setLocalGlobalDefaults(prev => ({ ...prev, isGlobalMock: enabled }));
   };
 
   const handleSave = () => {
@@ -151,7 +271,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     storeSetGlobalDefault('text', localGlobalDefaults.text);
     storeSetGlobalDefault('image', localGlobalDefaults.image);
     storeSetGlobalDefault('video', localGlobalDefaults.video);
-    storeSetGlobalMock(localGlobalDefaults.isGlobalMock);
 
     setShowSaveToast(true);
     setTimeout(() => {
@@ -170,27 +289,26 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   const handleTestProvider = async (provider: ProviderConfig) => {
     setTestStatus(prev => ({ ...prev, [provider.id]: 'loading' }));
     try {
-      const modelId = provider.models[0]?.id || 'gpt-4o';
-      const response = await aiService.generate({
-        prompt: 'Hi',
-        modelId,
-        provider
-      });
-
-      if (response.error) throw new Error(response.error);
-      setTestStatus(prev => ({ ...prev, [provider.id]: 'success' }));
+      const success = await aiService.testConnection(provider);
+      setTestStatus(prev => ({ ...prev, [provider.id]: success ? 'success' : 'error' }));
     } catch (err) {
       setTestStatus(prev => ({ ...prev, [provider.id]: 'error' }));
     }
   };
-  const handleAddModel = (providerId: string) => {
+  const handleAddModel = (providerId: string, type: 'text' | 'image' | 'video') => {
     const provider = localProviders.find(p => p.id === providerId);
     if (!provider) return;
 
     const newModel: ModelConfig = {
-      id: 'new-model-id',
-      name: 'New Model',
-      capabilities: { text: true, vision: false, image: false, video: false },
+      id: '',
+      name: '',
+      capabilities: { 
+        text: type === 'text', 
+        image: type === 'image', 
+        video: type === 'video' 
+      },
+      protocol: provider.defaultProtocol,
+      enabled: true,
       isCustom: true
     };
 
@@ -199,8 +317,45 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     });
   };
 
-  const toggleKeyVisibility = (id: string) => {
-    setShowKey(prev => ({ ...prev, [id]: !prev[id] }));
+  const handleDragEnd = (event: DragEndEvent, type: 'text' | 'image' | 'video') => {
+    const { active, over } = event;
+    if (!over || !selectedProvider) return;
+
+    if (active.id !== over.id) {
+      const typeModels = selectedProvider.models.filter(m => m.capabilities[type]);
+      const oldIndex = typeModels.findIndex(m => {
+        const globalIdx = selectedProvider.models.indexOf(m);
+        return `${selectedProvider.id}-${type}-${m.id}-${globalIdx}` === active.id;
+      });
+      const newIndex = typeModels.findIndex(m => {
+        const globalIdx = selectedProvider.models.indexOf(m);
+        return `${selectedProvider.id}-${type}-${m.id}-${globalIdx}` === over.id;
+      });
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const movedModel = typeModels[oldIndex];
+        const otherModels = selectedProvider.models.filter(m => !m.capabilities[type]);
+        
+        // Reconstruct the models array
+        const newTypeModels = arrayMove(typeModels, oldIndex, newIndex);
+        
+        // This is tricky because we want to maintain relative order but they are mixed in the global array
+        // For simplicity, we'll group them by capability for now or just update the global array
+        const newGlobalModels = [...selectedProvider.models];
+        
+        // Find all indices of models of this type in the global array
+        const globalIndices = selectedProvider.models
+          .map((m, i) => m.capabilities[type] ? i : -1)
+          .filter(i => i !== -1);
+          
+        // Replace them with the new ordered models
+        newTypeModels.forEach((m, i) => {
+          newGlobalModels[globalIndices[i]] = m;
+        });
+
+        handleUpdateProvider(selectedProvider.id, { models: newGlobalModels });
+      }
+    }
   };
 
   return (
@@ -275,14 +430,10 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                     >
                       <div className={clsx(
                         "w-2 h-2 rounded-full",
-                        p.id === 'system-mock' ? "bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]" :
                         p.enabled ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-zinc-600"
                       )} />
                       <div className="flex-1 min-w-0">
                         <div className="text-[11px] font-bold truncate">{p.name}</div>
-                        <div className="text-[9px] text-[var(--app-text-muted)] uppercase tracking-tighter truncate">
-                          {p.id === 'system-mock' ? 'System' : p.type}
-                        </div>
                       </div>
                     </button>
                   ))}
@@ -294,12 +445,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                     className="w-full py-2 px-4 rounded-xl bg-white/5 border border-dashed border-white/20 hover:border-[var(--brand-red)] hover:bg-[var(--brand-red)]/10 transition-all flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest"
                   >
                     <Plus size={14} /> Add Provider
-                  </button>
-                  <button 
-                    onClick={handleAdd12AI}
-                    className="w-full mt-2 py-2 px-4 rounded-xl bg-emerald-500/5 border border-dashed border-emerald-500/20 hover:border-emerald-500 hover:bg-emerald-500/10 transition-all flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-500"
-                  >
-                    <Zap size={14} /> Add 12AI Preset
                   </button>
                 </div>
               </aside>
@@ -313,21 +458,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         <div className="flex items-center gap-3">
                           <Zap size={20} className="text-yellow-500" fill="currentColor" />
                           <h3 className="text-sm font-display font-bold uppercase tracking-widest">Global Default Models</h3>
-                        </div>
-                        <div className="flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/5 border border-white/10">
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">Global System Mock</span>
-                          <button 
-                            onClick={() => handleSetGlobalMock(!localGlobalDefaults.isGlobalMock)}
-                            className={clsx(
-                              "w-10 h-5 rounded-full relative transition-all",
-                              localGlobalDefaults.isGlobalMock ? "bg-blue-500" : "bg-zinc-700"
-                            )}
-                          >
-                            <div className={clsx(
-                              "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                              localGlobalDefaults.isGlobalMock ? "right-1" : "left-1"
-                            )} />
-                          </button>
                         </div>
                       </div>
                       
@@ -346,9 +476,9 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                 <option value="" className="bg-[#1a1a1a]">Not Set</option>
                                 {localProviders.filter(p => p.enabled).map(p => (
                                   <optgroup key={p.id} label={p.name} className="bg-[#1a1a1a] text-[var(--app-text-muted)]">
-                                    {p.models.filter(m => m.capabilities[type === 'text' ? 'text' : type]).map(m => (
+                                    {p.models.filter(m => m.enabled && m.capabilities[type === 'text' ? 'text' : type]).map(m => (
                                       <option key={`${p.id}:${m.id}`} value={`${p.id}:${m.id}`} className="bg-[#1a1a1a] text-white">
-                                        {m.name} ({m.id})
+                                        {m.name || m.id} ({m.id})
                                       </option>
                                     ))}
                                   </optgroup>
@@ -413,47 +543,46 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             type="text"
                             value={selectedProvider.name}
                             onChange={(e) => handleUpdateProvider(selectedProvider.id, { name: e.target.value })}
-                            disabled={selectedProvider.id === 'system-mock'}
                             className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[var(--brand-red)] transition-all disabled:opacity-50"
                             placeholder="e.g. 12AI Aggregator"
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Protocol Type</label>
-                          {selectedProvider.id === 'system-mock' ? (
-                            <div className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs text-[var(--app-text-muted)] italic">
-                              Internal System Protocol
-                            </div>
-                          ) : (
-                            <select 
-                              value={selectedProvider.type}
-                              onChange={(e) => handleUpdateProvider(selectedProvider.id, { type: e.target.value as ProviderType })}
-                              className="w-full bg-[#1a1a1a] border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[var(--brand-red)] transition-all appearance-none"
-                            >
-                              <option value="gemini" className="bg-[#1a1a1a] text-white">Google Gemini (Native)</option>
-                              <option value="openai-compatible" className="bg-[#1a1a1a] text-white">OpenAI Compatible (Aggregator)</option>
-                            </select>
-                          )}
+                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Default Protocol</label>
+                          <div className="flex bg-white/5 border border-[var(--app-border)] rounded-xl p-1">
+                            {(['openai-compatible', 'gemini', 'mix'] as const).map(p => (
+                              <button
+                                key={p}
+                                onClick={() => handleUpdateProvider(selectedProvider.id, { defaultProtocol: p })}
+                                className={clsx(
+                                  "flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                                  selectedProvider.defaultProtocol === p 
+                                    ? "bg-[var(--brand-red)] text-white shadow-lg" 
+                                    : "text-[var(--app-text-muted)] hover:text-white"
+                                )}
+                              >
+                                {p === 'openai-compatible' ? 'OpenAI' : p === 'gemini' ? 'Gemini' : 'Mix'}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
-                      {selectedProvider.type === 'openai-compatible' && (
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Base URL</label>
-                          <input 
-                            type="text"
-                            value={selectedProvider.baseUrl}
-                            onChange={(e) => handleUpdateProvider(selectedProvider.id, { baseUrl: e.target.value })}
-                            className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all"
-                            placeholder="https://api.example.com/v1"
-                          />
-                        </div>
-                      )}
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Base URL</label>
+                        <input 
+                          type="text"
+                          value={selectedProvider.baseUrl}
+                          onChange={(e) => handleUpdateProvider(selectedProvider.id, { baseUrl: e.target.value })}
+                          className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all"
+                          placeholder={selectedProvider.type === 'gemini' ? "https://generativelanguage.googleapis.com" : "https://api.openai.com/v1"}
+                        />
+                      </div>
 
-                      {selectedProvider.type !== 'mock' && (
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">API Secret Key</label>
-                          <div className="relative">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">API Secret Key</label>
+                        <div className="flex gap-3">
+                          <div className="relative flex-1">
                             <input 
                               type={showKey[selectedProvider.id] ? "text" : "password"}
                               value={selectedProvider.apiKey}
@@ -468,104 +597,91 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                               {showKey[selectedProvider.id] ? <EyeOff size={14} /> : <Eye size={14} />}
                             </button>
                           </div>
-                          <p className="text-[9px] text-[var(--app-text-muted)] ml-1 flex items-center gap-1">
-                            <ShieldCheck size={10} /> Keys are stored locally in your browser's LocalStorage.
-                          </p>
-                        </div>
-                      )}
-                    </section>
-
-                    {/* Models Section */}
-                    <section className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-[var(--app-text-muted)] flex items-center gap-2">
-                          <Zap size={12} /> Available Models
-                        </h3>
-                        <button 
-                          onClick={() => handleAddModel(selectedProvider.id)}
-                          className="text-[9px] font-bold uppercase tracking-widest text-[var(--brand-red)] hover:underline flex items-center gap-1"
-                        >
-                          <Plus size={12} /> Custom Model
-                        </button>
-                      </div>
-
-                      <div className="space-y-2">
-                        {selectedProvider.models.map((model, mIdx) => (
-                          <div 
-                            key={`${selectedProvider.id}-${model.id}-${mIdx}`}
-                            className="bg-white/5 border border-[var(--app-border)] rounded-2xl p-4 flex items-center gap-6 group hover:border-white/20 transition-all"
+                          <button 
+                            onClick={() => handleTestProvider(selectedProvider)}
+                            disabled={testStatus[selectedProvider.id] === 'loading'}
+                            className={clsx(
+                              "px-6 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-2 min-w-[100px] justify-center",
+                              testStatus[selectedProvider.id] === 'success' ? "bg-emerald-500 text-white" :
+                              testStatus[selectedProvider.id] === 'error' ? "bg-red-500 text-white" :
+                              "bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-lg shadow-purple-500/20"
+                            )}
                           >
-                            <div className="flex-1 space-y-3">
-                              <div className="flex items-center gap-4">
-                                <input 
-                                  type="text"
-                                  value={model.name}
-                                  onChange={(e) => {
-                                    const newModels = [...selectedProvider.models];
-                                    newModels[mIdx] = { ...model, name: e.target.value };
-                                    handleUpdateProvider(selectedProvider.id, { models: newModels });
-                                  }}
-                                  className="bg-transparent border-none p-0 text-xs font-bold focus:outline-none focus:ring-0 w-32"
-                                  placeholder="Model Name"
-                                />
-                                <div className="h-4 w-px bg-white/10" />
-                                <input 
-                                  type="text"
-                                  value={model.id}
-                                  onChange={(e) => {
-                                    const newModels = [...selectedProvider.models];
-                                    newModels[mIdx] = { ...model, id: e.target.value };
-                                    handleUpdateProvider(selectedProvider.id, { models: newModels });
-                                  }}
-                                  className="bg-transparent border-none p-0 text-[10px] font-mono text-[var(--app-text-muted)] focus:outline-none focus:ring-0 flex-1"
-                                  placeholder="model-id-v1"
-                                />
-                              </div>
-
-                              <div className="flex items-center gap-4">
-                                <span className="text-[8px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">Capabilities:</span>
-                                <div className="flex items-center gap-2">
-                                  {(['text', 'vision', 'image', 'video'] as const).map(cap => (
-                                    <button
-                                      key={cap}
-                                      onClick={() => {
-                                        const newModels = [...selectedProvider.models];
-                                        newModels[mIdx] = { 
-                                          ...model, 
-                                          capabilities: { ...model.capabilities, [cap]: !model.capabilities[cap] } 
-                                        };
-                                        handleUpdateProvider(selectedProvider.id, { models: newModels });
-                                      }}
-                                      className={clsx(
-                                        "px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-tighter transition-all border",
-                                        model.capabilities[cap] 
-                                          ? "bg-[var(--brand-red)]/20 border-[var(--brand-red)]/40 text-[var(--brand-red)]" 
-                                          : "bg-white/5 border-white/10 text-[var(--app-text-muted)]"
-                                      )}
-                                    >
-                                      {cap}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            <button 
-                              onClick={() => {
-                                const newModels = selectedProvider.models.filter((_, i) => i !== mIdx);
-                                handleUpdateProvider(selectedProvider.id, { models: newModels });
-                              }}
-                              className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        ))}
+                            {testStatus[selectedProvider.id] === 'loading' ? <Loader2 size={14} className="animate-spin" /> : '测试'}
+                          </button>
+                        </div>
+                        <p className="text-[9px] text-[var(--app-text-muted)] ml-1 flex items-center gap-1">
+                          <ShieldCheck size={10} /> Keys are stored locally in your browser's LocalStorage.
+                        </p>
                       </div>
                     </section>
 
-                    {/* Danger Zone */}
-                    {selectedProvider.id !== 'system-mock' && (
+                    {/* Models Section - Three Columns */}
+                    <section className="space-y-4">
+                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+                        <Zap size={14} className="text-[var(--brand-red)]" />
+                        <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-white">Model Configuration</h3>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-6">
+                        {(['text', 'image', 'video'] as const).map(type => {
+                          const typeModels = selectedProvider.models.filter(m => m.capabilities[type]);
+                          const modelIds = typeModels.map((m, i) => {
+                            const globalIdx = selectedProvider.models.indexOf(m);
+                            return `${selectedProvider.id}-${type}-${m.id}-${globalIdx}`;
+                          });
+
+                          return (
+                            <div key={type} className="space-y-3">
+                              <div className="flex items-center justify-between px-1">
+                                <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
+                                  {type === 'text' ? 'Text / Vision' : type === 'image' ? 'Image' : 'Video'}
+                                </span>
+                                <button 
+                                  onClick={() => handleAddModel(selectedProvider.id, type)}
+                                  className="p-1 hover:bg-white/10 rounded-md text-[var(--brand-red)] transition-all"
+                                >
+                                  <Plus size={12} />
+                                </button>
+                              </div>
+
+                              <DndContext
+                                sensors={sensors}
+                                collisionDetection={closestCenter}
+                                onDragEnd={(event) => handleDragEnd(event, type)}
+                              >
+                                <SortableContext
+                                  items={modelIds}
+                                  strategy={verticalListSortingStrategy}
+                                >
+                                  <div className="space-y-2">
+                                    {typeModels.map((model) => {
+                                      const globalIdx = selectedProvider.models.indexOf(model);
+                                      return (
+                                        <SortableModelItem
+                                          key={`${selectedProvider.id}-${type}-${model.id}-${globalIdx}`}
+                                          model={model}
+                                          globalIdx={globalIdx}
+                                          type={type}
+                                          selectedProvider={selectedProvider}
+                                          handleUpdateProvider={handleUpdateProvider}
+                                        />
+                                      );
+                                    })}
+                                    {typeModels.length === 0 && (
+                                      <div className="py-8 border border-dashed border-white/5 rounded-xl flex items-center justify-center">
+                                        <span className="text-[8px] uppercase tracking-widest text-white/10">No Models</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </SortableContext>
+                              </DndContext>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
                       <section className="pt-8 border-t border-white/10">
                         <div className="p-6 rounded-2xl bg-red-500/5 border border-red-500/10 flex items-center justify-between">
                           <div>
@@ -584,7 +700,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                           </button>
                         </div>
                       </section>
-                    )}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center space-y-4">
