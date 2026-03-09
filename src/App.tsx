@@ -711,8 +711,8 @@ function Flow() {
           deleteKeyCode={['Backspace', 'Delete']}
           selectionKeyCode="Shift"
           multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
-          panOnDrag={interactionMode === 'pan' || isSpacePressed ? [1, 2] : [2]}
-          selectionOnDrag={interactionMode === 'selection'}
+          panOnDrag={[2]}
+          selectionOnDrag={true}
           selectionMode={SelectionMode.Partial}
           className={cn(
             interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
@@ -1055,6 +1055,10 @@ function Flow() {
           <span className="text-[9px] font-mono text-[var(--app-text-muted)] uppercase">PARTTA v1.0.0</span>
           <div className="h-3 w-px bg-[var(--app-border)]" />
           <span className="text-[9px] font-mono text-[var(--app-text-muted)] uppercase">Project: Untitled_Creative_01</span>
+          <div className="h-3 w-px bg-[var(--app-border)]" />
+          <span className="text-[9px] font-mono text-emerald-500/60 uppercase">
+            Shift + Drag to Select | Middle Click to Pan
+          </span>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-[9px] font-mono text-[var(--app-text-muted)] uppercase">Memory: 1.2GB / 16GB</span>

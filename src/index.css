@@ -125,16 +125,34 @@
   pointer-events: none !important;
 }
 
-.react-flow__handle {
-  opacity: 0 !important;
+/* 针对所有 Handle 的强制透明，抹除伪元素 */
+[class*="react-flow__handle"] {
   background: transparent !important;
   border: none !important;
-  width: 1px !important;
-  height: 1px !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
 }
 
-.react-flow__handle-connecting {
+[class*="react-flow__handle"]::after,
+[class*="react-flow__handle"]::before {
+  content: none !important;
+  display: none !important;
+}
+
+/* 即使在连接状态下也要保持视觉透明 */
+[class*="react-flow__handle"].connectable,
+[class*="react-flow__handle"].connecting,
+[class*="react-flow__handle"].valid {
+  background: transparent !important;
   opacity: 0 !important;
+  border: none !important;
+}
+
+.react-flow__handle-connecting,
+.react-flow__handle-valid,
+.connectionindicator {
+  opacity: 0 !important;
+  display: none !important;
 }
 
 /* 彻底抹除所有连接相关的 SVG 容器，直到真正需要连线为止 */
@@ -184,15 +202,4 @@
   stroke: #3b82f6 !important;
   stroke-width: 2 !important;
   stroke-dasharray: 5, 5 !important;
-}
-
-.react-flow__handle {
-  width: 8px;
-  height: 8px;
-  background: var(--app-text-muted);
-  border: 2px solid var(--app-bg);
-}
-
-.react-flow__handle:hover {
-  background: var(--brand-red);
 }
