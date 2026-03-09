@@ -11,7 +11,8 @@ import {
   ConnectionLineType,
   ConnectionLineComponentProps,
   getBezierPath,
-  Position
+  Position,
+  SelectionMode
 } from '@xyflow/react';
 
 const ConnectionLine = ({ fromX, fromY, toX, toY, fromHandle }: ConnectionLineComponentProps) => {
@@ -29,12 +30,15 @@ const ConnectionLine = ({ fromX, fromY, toX, toY, fromHandle }: ConnectionLineCo
     targetPosition: Position.Left,
   });
 
+  const distance = Math.sqrt(Math.pow(toX - fromX, 2) + Math.pow(toY - fromY, 2));
+  if (distance < 2) return null;
+
   return (
     <g>
       <motion.path
         fill="none"
         stroke={strokeColor}
-        strokeWidth={2}
+        strokeWidth={3}
         strokeDasharray="5,5"
         animate={{
           strokeDashoffset: [0, -10],
@@ -45,7 +49,8 @@ const ConnectionLine = ({ fromX, fromY, toX, toY, fromHandle }: ConnectionLineCo
           ease: "linear",
         }}
         d={path}
-        opacity={0.8}
+        opacity={0.9}
+        className="custom-connection-path"
       />
     </g>
   );
@@ -59,8 +64,6 @@ import { TextNode } from './TextNode';
 import { ImageNode } from './ImageNode';
 import { VideoNode } from './VideoNode';
 import { ShellNode } from './ShellNode';
-import { GhostNode } from './GhostNode';
-import { ParticleEffect } from './ParticleEffect';
 import { ModelsModal } from './components/ModelsModal';
 import { 
   Plus, 
@@ -96,6 +99,8 @@ const edgeTypes = {
 };
 
 import { PinTargetModal } from './components/PinTargetModal';
+import { SettingsModal } from './components/SettingsModal';
+import { Toast } from './components/UI';
 
 function Flow() {
   const { 
@@ -108,8 +113,18 @@ function Flow() {
     deleteNodes,
     isDemoMode,
     setDemoMode,
+    isRecognitionMode,
     setNodes,
-    setEdges
+    setEdges,
+    undo,
+    redo,
+    copyNodes,
+    pasteNodes,
+    cutNodes,
+    cloneNodes,
+    pushHistory,
+    interactionMode,
+    setInteractionMode
   } = useTapStore();
 
   const handleResetApp = useCallback(() => {
@@ -129,13 +144,110 @@ function Flow() {
     getViewport
   } = useReactFlow();
   const [isModelsModalOpen, setIsModelsModalOpen] = React.useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = React.useState(false);
   const [menu, setMenu] = React.useState<{ top: number; left: number; x: number; y: number; sourceHandle?: { nodeId: string; handleId: string | null; type: string } } | null>(null);
   const [isShiftPressed, setIsShiftPressed] = React.useState(false);
+  const [isAltPressed, setIsAltPressed] = React.useState(false);
+  const [isSpacePressed, setIsSpacePressed] = React.useState(false);
+  const rightClickStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const [pendingConnection, setPendingConnection] = React.useState<{ nodeId: string; handleId: string | null; type: string } | null>(null);
-  const [particles, setParticles] = React.useState<{ id: string; x: number; y: number }[]>([]);
   const [isSnapToGrid, setIsSnapToGrid] = React.useState(false);
+  const [isConnecting, setIsConnecting] = React.useState(false);
+
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      // Force clear pending connection on any global mouse up
+      // This is a safety net for when onConnectEnd doesn't fire
+      setTimeout(() => {
+        setPendingConnection(null);
+      }, 100);
+    };
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [setPendingConnection]);
+  const [isDraggingOver, setIsDraggingOver] = React.useState(false);
+  const [isInvalidFormat, setIsInvalidFormat] = React.useState(false);
+  const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const mousePositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const targetZoomRef = React.useRef<number | null>(null);
   const zoomTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    if (!isDraggingOver) {
+      setIsDraggingOver(true);
+      // Check if any item is an image
+      const items = Array.from(event.dataTransfer.items);
+      const hasImage = items.some(item => item.type.startsWith('image/'));
+      setIsInvalidFormat(!hasImage);
+    }
+  }, [isDraggingOver]);
+
+  const onDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Only leave if we're actually leaving the container
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (
+      event.clientX <= rect.left ||
+      event.clientX >= rect.right ||
+      event.clientY <= rect.top ||
+      event.clientY >= rect.bottom
+    ) {
+      setIsDraggingOver(false);
+      setIsInvalidFormat(false);
+    }
+  }, []);
+
+  const onDrop = useCallback(async (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingOver(false);
+    setIsInvalidFormat(false);
+
+    const files = Array.from(event.dataTransfer.files);
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+
+    if (imageFiles.length === 0) return;
+
+    const position = screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        const id = `node-${Date.now()}-${i}`;
+        
+        addNode({
+          id,
+          type: 'image-node',
+          position: {
+            x: position.x + (i * 40),
+            y: position.y + (i * 40),
+          },
+          style: { width: 360, height: 400 },
+          data: { 
+            type: 'image', 
+            prompt: '',
+            pins: [],
+            outputs: { text: '', image: base64, video: '', prompt: '' },
+            outputVersions: { text: 0, image: 1, video: 0, prompt: 0 },
+            activeOutputMode: 'image'
+          },
+        });
+      };
+      
+      reader.readAsDataURL(file);
+    }
+  }, [screenToFlowPosition, addNode]);
 
   const smoothZoom = useCallback((factor: number) => {
     const { zoom } = getViewport();
@@ -165,23 +277,203 @@ function Flow() {
     }, 350);
   }, [getViewport, zoomTo]);
 
-  // Listen for shift and ctrl keys
+  const onPaste = useCallback(async (event: ClipboardEvent) => {
+    // 1. Focus Protection
+    const target = event.target as HTMLElement;
+    if (
+      target.tagName === 'INPUT' || 
+      target.tagName === 'TEXTAREA' || 
+      target.isContentEditable ||
+      target.closest('[contenteditable="true"]') ||
+      event.defaultPrevented
+    ) {
+      return;
+    }
+
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    // 2. Position Calculation
+    let position: { x: number; y: number };
+    const mainElement = document.querySelector('main');
+    const rect = mainElement?.getBoundingClientRect();
+    
+    if (mousePositionRef.current && rect && 
+        mousePositionRef.current.x >= rect.left && 
+        mousePositionRef.current.x <= rect.right && 
+        mousePositionRef.current.y >= rect.top && 
+        mousePositionRef.current.y <= rect.bottom) {
+      position = screenToFlowPosition(mousePositionRef.current);
+    } else {
+      // Fallback to viewport center
+      const center = {
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2
+      };
+      position = screenToFlowPosition(center);
+    }
+
+    // 3. Extract Data
+    const itemsArray = Array.from(items);
+    
+    // Process images first
+    const imageItems = itemsArray.filter(item => item.type.indexOf('image') !== -1);
+    const textItems = itemsArray.filter(item => item.type === 'text/plain');
+
+    imageItems.forEach((item, i) => {
+      const file = item.getAsFile();
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const base64 = e.target?.result as string;
+          const id = `node-paste-${Date.now()}-${i}`;
+          addNode({
+            id,
+            type: 'image-node',
+            position: { x: position.x + (i * 20), y: position.y + (i * 20) },
+            style: { width: 360, height: 400 },
+            data: { 
+              type: 'image', 
+              prompt: '',
+              pins: [],
+              outputs: { text: '', image: base64, video: '', prompt: '' },
+              outputVersions: { text: 0, image: 1, video: 0, prompt: 0 },
+              activeOutputMode: 'image'
+            },
+          });
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    // Process text if no images were found OR if it's a separate text item
+    // Usually, if you copy a mixed content from a browser, it has both.
+    // We'll create both if they exist.
+    textItems.forEach((item, i) => {
+      item.getAsString((text) => {
+        if (text && text.trim()) {
+          // Check if it's our internal node data
+          if (text.startsWith('TAP_FLOW_CLIPBOARD:')) {
+            try {
+              const jsonStr = text.substring('TAP_FLOW_CLIPBOARD:'.length);
+              const data = JSON.parse(jsonStr);
+              pasteNodes(position, data);
+              return;
+            } catch (err) {
+              console.error('Failed to parse internal clipboard data', err);
+            }
+          }
+
+          // Check if it's a URL to an image - we could handle this but let's stick to plain text for now
+          const id = `node-paste-text-${Date.now()}-${i}`;
+          addNode({
+            id,
+            type: 'text-node',
+            position: { 
+              x: position.x + (imageItems.length > 0 ? 40 : 0) + (i * 20), 
+              y: position.y + (imageItems.length > 0 ? 40 : 0) + (i * 20) 
+            },
+            data: { 
+              type: 'text', 
+              prompt: text,
+              pins: [],
+              outputs: { text: '', image: '', video: '', prompt: '' },
+              outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
+              activeOutputMode: 'text'
+            },
+          });
+        }
+      });
+    });
+  }, [screenToFlowPosition, addNode]);
+
+  // Global listeners for keys, mouse position, and paste
   useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePositionRef.current = { x: e.clientX, y: e.clientY };
+    };
     const handleKeyDown = (e: KeyboardEvent) => { 
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (isCtrl) useTapStore.getState().setCtrlPressed(true);
       if (e.key === 'Shift') setIsShiftPressed(true); 
-      if (e.key === 'Control' || e.key === 'Meta') useTapStore.getState().setCtrlPressed(true);
+      if (e.key === 'Alt') setIsAltPressed(true);
+
+      // Shortcuts
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('[contenteditable="true"]');
+
+      if (e.key === ' ' && !isInput) {
+        e.preventDefault();
+        setIsSpacePressed(true);
+      }
+
+      if (isCtrl && !isInput) {
+        const currentNodes = useTapStore.getState().nodes;
+        const clipboard = useTapStore.getState().clipboard;
+
+        if (e.key === 'c' || e.key === 'C') {
+          const selected = currentNodes.filter(n => n.selected);
+          if (selected.length > 0) {
+            e.preventDefault();
+            copyNodes(selected);
+            setToast({ message: `已复制 ${selected.length} 个节点`, type: 'info' });
+          }
+        }
+        if (e.key === 'x' || e.key === 'X') {
+          const selected = currentNodes.filter(n => n.selected);
+          if (selected.length > 0) {
+            e.preventDefault();
+            cutNodes(selected);
+            setToast({ message: `已剪切 ${selected.length} 个节点`, type: 'info' });
+          }
+        }
+        if (e.key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) redo();
+          else undo();
+        }
+        if (e.key === 'y') {
+          e.preventDefault();
+          redo();
+        }
+      }
+
+      if (!isInput) {
+        if (e.key === 'v' || e.key === 'V') setInteractionMode('selection');
+        if (e.key === 'h' || e.key === 'H') setInteractionMode('pan');
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => { 
       if (e.key === 'Shift') setIsShiftPressed(false); 
-      if (e.key === 'Control' || e.key === 'Meta') useTapStore.getState().setCtrlPressed(false);
+      if (e.key === 'Alt') setIsAltPressed(false);
+      if (e.key === ' ') setIsSpacePressed(false);
+      
+      // More robust Ctrl state tracking
+      if (!e.ctrlKey && !e.metaKey) {
+        useTapStore.getState().setCtrlPressed(false);
+      }
     };
+
+    const handleBlur = () => {
+      setIsShiftPressed(false);
+      setIsAltPressed(false);
+      useTapStore.getState().setCtrlPressed(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('paste', onPaste);
+    window.addEventListener('blur', handleBlur);
+
     return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('paste', onPaste);
+      window.removeEventListener('blur', handleBlur);
     };
-  }, []);
+  }, [onPaste]);
 
   const handleAddNode = useCallback((type: NodeType, position?: { x: number; y: number }, sourceHandle?: { nodeId: string; handleId: string | null; type: string }) => {
     const id = `node-${Date.now()}`;
@@ -215,64 +507,22 @@ function Flow() {
     setPendingConnection(null);
   }, [nodes.length, addNode, onConnect]);
 
-  // Ghost Node Logic
-  const selectedNodes = nodes.filter(n => n.selected);
-  const showGhost = isShiftPressed && selectedNodes.length >= 2;
-  
-  const ghostPosition = React.useMemo(() => {
-    if (!showGhost) return null;
-    const maxX = Math.max(...selectedNodes.map(n => n.position.x + (n.measured?.width || 320)));
-    const minY = Math.min(...selectedNodes.map(n => n.position.y));
-    const maxY = Math.max(...selectedNodes.map(n => n.position.y + (n.measured?.height || 200)));
-    
-    return {
-      x: maxX + 100,
-      y: minY + (maxY - minY) / 2
-    };
-  }, [showGhost, selectedNodes]);
-
-  const handleMerge = useCallback(() => {
-    if (!ghostPosition) return;
-    
-    const id = `node-${Date.now()}`;
-    const screenPos = flowToScreenPosition(ghostPosition);
-    
-    // Add particles
-    setParticles(prev => [...prev, { id: `p-${Date.now()}`, x: screenPos.x, y: screenPos.y }]);
-    
-    // Generate initial prompt with pills
-    const pills = selectedNodes.map(n => `[${n.data.shortId || 'REF'}]`).join(' ');
-
-    // Create the shell node
-    addNode({
-      id,
-      type: 'none',
-      position: ghostPosition,
-      data: { 
-        label: 'Shell', 
-        type: 'none', 
-        prompt: pills,
-        pins: [],
-        outputs: { text: '', image: '', video: '', prompt: '' },
-        outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
-        activeOutputMode: 'text'
-      },
-    });
-
-    // Create edges from selected nodes to new node
-    selectedNodes.forEach(sourceNode => {
-      onConnect({
-        source: sourceNode.id,
-        target: id,
-        sourceHandle: null,
-        targetHandle: 'input-main'
-      });
-    });
-  }, [ghostPosition, addNode, selectedNodes, onConnect, flowToScreenPosition]);
-
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
+      
+      // Suppress menu if dragged significantly with right click
+      if (rightClickStartRef.current) {
+        const dx = event.clientX - rightClickStartRef.current.x;
+        const dy = event.clientY - rightClickStartRef.current.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        rightClickStartRef.current = null;
+        
+        if (distance > 5) {
+          return;
+        }
+      }
+
       setMenu({
         top: event.clientY,
         left: event.clientX,
@@ -284,6 +534,22 @@ function Flow() {
     [setMenu]
   );
 
+  const onMouseDown = useCallback((event: React.MouseEvent) => {
+    // Force clear any pending states on any mouse down to prevent "stuck" UI
+    if (event.button === 0) { // Left click
+      setPendingConnection(null);
+      setMenu(null);
+      setIsConnecting(false);
+    }
+
+    if (event.button === 2) { // Right click
+      const target = event.target as HTMLElement;
+      if (target.closest('.react-flow__pane')) {
+        rightClickStartRef.current = { x: event.clientX, y: event.clientY };
+      }
+    }
+  }, [setPendingConnection, setMenu]);
+
   const menuLastOpenedAt = React.useRef<number>(0);
 
   const onPaneClick = useCallback(() => {
@@ -293,14 +559,19 @@ function Flow() {
     
     setMenu(null);
     setPendingConnection(null);
+    setIsConnecting(false);
   }, [setMenu]);
 
   const onConnectStart = useCallback((event: any, { nodeId, handleId, handleType }: any) => {
+    // Don't start connection if Shift is pressed (user is likely trying to selection)
+    if (isShiftPressed) return;
+
     // Only handle source handles (outputs)
     if (handleType === 'source') {
       setPendingConnection({ nodeId, handleId, type: handleId || 'text' });
+      setIsConnecting(true);
     }
-  }, []);
+  }, [isShiftPressed]);
 
   const onConnectEnd = useCallback((event: any) => {
     if (!pendingConnection) return;
@@ -326,10 +597,28 @@ function Flow() {
         y: clientY,
         sourceHandle: pendingConnection
       });
+      setPendingConnection(null);
     } else {
-      setTimeout(() => setPendingConnection(null), 100);
+      setPendingConnection(null);
     }
+    setIsConnecting(false);
   }, [pendingConnection]);
+
+  const onNodeDragStart = useCallback((event: React.MouseEvent, node: TapNode) => {
+    if (isAltPressed) {
+      const selectedNodes = nodes.filter(n => n.selected);
+      if (selectedNodes.length > 0) {
+        cloneNodes(selectedNodes);
+      }
+    }
+  }, [isAltPressed, nodes, cloneNodes]);
+
+  const onNodeDragStop = useCallback(() => {
+    // Clear isCloning flag for all nodes
+    setNodes(nodes.map(n => n.data.isCloning ? { ...n, data: { ...n.data, isCloning: false } } : n));
+    pushHistory();
+    setIsConnecting(false);
+  }, [pushHistory, nodes, setNodes]);
 
   return (
     <div className="w-full h-screen bg-[var(--app-bg)] text-[var(--app-text)] font-sans overflow-hidden flex flex-col">
@@ -354,10 +643,10 @@ function Flow() {
               <Cpu size={14} /> Models
             </button>
             <button 
-              onClick={handleResetApp}
+              onClick={() => setIsSettingsModalOpen(true)}
               className="px-3 py-1.5 rounded-md hover:bg-[var(--app-border)] text-xs font-medium text-[var(--app-text-muted)] hover:text-white transition-all flex items-center gap-2"
             >
-              <Settings size={14} /> Reset
+              <Settings size={14} /> Setting
             </button>
           </nav>
         </div>
@@ -393,7 +682,12 @@ function Flow() {
       </header>
 
       {/* Main Canvas Area */}
-      <main className="flex-1 relative">
+      <main 
+        className={cn("flex-1 relative", isShiftPressed && "shift-pressed", isConnecting && "connection-active")}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -403,17 +697,31 @@ function Flow() {
           onConnectStart={onConnectStart}
           onConnectEnd={onConnectEnd}
           onNodesDelete={deleteNodes}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDragStop={onNodeDragStop}
           onPaneContextMenu={onPaneContextMenu}
+          onMouseDown={onMouseDown}
           onPaneClick={onPaneClick}
           onEdgesDelete={(edges) => {
             console.log('Edges deleted:', edges);
           }}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          connectionLineComponent={ConnectionLine}
           deleteKeyCode={['Backspace', 'Delete']}
-          selectionKeyCode={['Shift']}
-          multiSelectionKeyCode={['Control', 'Meta']}
+          selectionKeyCode="Shift"
+          multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
+          panOnDrag={interactionMode === 'pan' || isSpacePressed ? [1, 2] : [2]}
+          selectionOnDrag={interactionMode === 'selection'}
+          selectionMode={SelectionMode.Partial}
+          className={cn(
+            interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
+            isRecognitionMode && "mode-recognition"
+          )}
           onNodeClick={(event, node) => {
+            // If Shift/Ctrl/Meta is pressed, let React Flow handle multi-selection
+            if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+
             // Custom selection logic for parent-child linking
             const nodeData = node.data as any;
             if (nodeData.parentId) {
@@ -451,7 +759,7 @@ function Flow() {
           colorMode="dark"
           snapToGrid={isSnapToGrid}
           snapGrid={[15, 15]}
-          connectionRadius={80}
+          connectionRadius={20}
           zoomOnScroll={false}
           onPaneScroll={(event) => {
             if (event) {
@@ -466,8 +774,8 @@ function Flow() {
           connectionLineType={ConnectionLineType.Bezier}
           connectionLineStyle={{ 
             stroke: '#3b82f6', 
-            strokeWidth: 2, 
-            opacity: 0.8
+            strokeWidth: 3, 
+            opacity: 0.9
           }}
           defaultEdgeOptions={{
             type: 'default',
@@ -516,32 +824,6 @@ function Flow() {
 
           {/* Specialized UI Overlays */}
           <AnimatePresence>
-            {/* Ghost Node Intent Lines */}
-            {showGhost && ghostPosition && (
-              <svg className="absolute inset-0 w-full h-full pointer-events-none z-[99]">
-                {selectedNodes.map(sn => {
-                  const start = flowToScreenPosition({ 
-                    x: sn.position.x + (sn.measured?.width || 320) / 2, 
-                    y: sn.position.y + (sn.measured?.height || 200) / 2 
-                  });
-                  const end = flowToScreenPosition(ghostPosition);
-                  return (
-                    <motion.line
-                      key={`intent-${sn.id}`}
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={{ pathLength: 1, opacity: 1 }}
-                      x1={start.x}
-                      y1={start.y}
-                      x2={end.x}
-                      y2={end.y}
-                      stroke="rgba(255, 255, 255, 0.2)"
-                      strokeWidth="2"
-                    />
-                  );
-                })}
-              </svg>
-            )}
-
             {/* Drag-to-create pending line */}
             {menu?.sourceHandle && (
               <svg className="fixed inset-0 w-full h-full pointer-events-none z-[999]">
@@ -609,22 +891,6 @@ function Flow() {
               </svg>
             )}
 
-            {/* Ghost Node */}
-            {showGhost && ghostPosition && (
-              <GhostNode 
-                position={flowToScreenPosition(ghostPosition)} 
-                onMerge={handleMerge}
-              />
-            )}
-
-            {/* Particles */}
-            {particles.map(p => (
-              <ParticleEffect 
-                key={p.id} 
-                position={p} 
-                onComplete={() => setParticles(prev => prev.filter(item => item.id !== p.id))} 
-              />
-            ))}
           </AnimatePresence>
 
           {/* Floating Controls Panel */}
@@ -638,10 +904,24 @@ function Flow() {
               </button>
               <div className="h-5 w-px bg-[var(--app-border)] mx-1" />
               <div className="flex items-center gap-0.5">
-                <button className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all">
+                <button 
+                  onClick={() => setInteractionMode('selection')}
+                  className={cn(
+                    "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
+                    interactionMode === 'selection' ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
+                  )}
+                  title="Selection Tool (V)"
+                >
                   <MousePointer2 size={16} />
                 </button>
-                <button className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--app-border)] text-[var(--app-text-muted)] hover:text-white transition-all">
+                <button 
+                  onClick={() => setInteractionMode('pan')}
+                  className={cn(
+                    "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
+                    interactionMode === 'pan' ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
+                  )}
+                  title="Pan Tool (H)"
+                >
                   <Hand size={16} />
                 </button>
                 <button 
@@ -711,6 +991,61 @@ function Flow() {
               </div>
             </div>
           </Panel>
+
+          {/* Global Dropzone Overlay */}
+          <AnimatePresence>
+            {isDraggingOver && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className={cn(
+                  "absolute inset-0 z-[200] flex items-center justify-center p-8 transition-colors duration-300",
+                  isInvalidFormat ? "bg-orange-500/10" : "bg-black/30 backdrop-blur-[2px]"
+                )}
+              >
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className={cn(
+                    "w-full h-full border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-colors duration-300",
+                    isInvalidFormat ? "border-orange-500/40" : "border-[var(--brand-red)]/40"
+                  )}
+                >
+                  <div className="glass-panel p-8 rounded-2xl border border-white/10 flex flex-col items-center gap-4 shadow-2xl">
+                    <div className={cn(
+                      "w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-300",
+                      isInvalidFormat ? "bg-orange-500/20 text-orange-400" : "bg-[var(--brand-red)]/20 text-[var(--brand-red)]"
+                    )}>
+                      {isInvalidFormat ? <Box size={24} /> : <ImageIcon size={24} />}
+                    </div>
+                    
+                    <div className="text-center space-y-1">
+                      <h2 className={cn(
+                        "text-xl font-display uppercase tracking-widest transition-colors duration-300",
+                        isInvalidFormat ? "text-orange-400" : "text-white"
+                      )}>
+                        {isInvalidFormat ? "Unsupported Format" : "Drop to Upload"}
+                      </h2>
+                      <p className="text-[var(--app-text-muted)] font-mono text-[10px] uppercase tracking-[0.2em]">
+                        {isInvalidFormat ? "JPG, PNG, WEBP ONLY" : "Creating new node at cursor"}
+                      </p>
+                    </div>
+
+                    {isInvalidFormat && (
+                      <motion.div 
+                        initial={{ y: 5, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        className="px-3 py-1 bg-orange-500/10 border border-orange-500/20 rounded text-[9px] text-orange-400 font-bold uppercase tracking-widest"
+                      >
+                        Invalid File Type
+                      </motion.div>
+                    )}
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </ReactFlow>
       </main>
 
@@ -732,7 +1067,19 @@ function Flow() {
         isOpen={isModelsModalOpen} 
         onClose={() => setIsModelsModalOpen(false)} 
       />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />
       <PinTargetModal />
+      
+      {/* Toast */}
+      <Toast 
+        isVisible={!!toast}
+        message={toast?.message || ''}
+        type={toast?.type}
+        onClose={() => setToast(null)}
+      />
     </div>
   );
 }

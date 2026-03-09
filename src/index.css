@@ -93,30 +93,91 @@
   scrollbar-width: none;
 }
 
+.mode-pan .react-flow__pane {
+  cursor: grab !important;
+}
+.mode-pan .react-flow__pane:active {
+  cursor: grabbing !important;
+}
+.mode-selection .react-flow__pane {
+  cursor: default !important;
+}
+.mode-recognition .react-flow__pane {
+  cursor: crosshair !important;
+}
+
+.shift-pressed .react-flow__node {
+  cursor: default !important;
+}
+
+/* Nodes Selection Box (The dashed box around multiple selected nodes) */
+.react-flow__nodesselection-rect {
+  stroke: #3b82f6 !important; /* Blue */
+  stroke-width: 2px !important;
+  stroke-dasharray: 5, 5 !important;
+}
+
+.react-flow__selection {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border: 1px solid #3b82f6 !important;
+  border-radius: 4px !important;
+  z-index: 10000 !important;
+  pointer-events: none !important;
+}
+
+.react-flow__handle {
+  opacity: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  width: 1px !important;
+  height: 1px !important;
+}
+
+.react-flow__handle-connecting {
+  opacity: 0 !important;
+}
+
+/* 彻底抹除所有连接相关的 SVG 容器，直到真正需要连线为止 */
+.react-flow__connectionline,
+.react-flow__connection-path,
+.react-flow__connection {
+  stroke-width: 0 !important;
+  fill: none !important;
+  pointer-events: none !important;
+  display: none !important;
+}
+
+/* 只有当连接状态真正激活时（即用户真的在拉线），才显示出来 */
+.connection-active .react-flow__connection-path,
+.connection-active .custom-connection-path {
+  display: block !important;
+  stroke-width: 3px !important;
+}
+
 /* React Flow Customizations */
 .react-flow__node {
   border-radius: 12px;
   padding: 0;
-  border: 1px solid var(--app-border);
-  background: var(--app-panel);
+  border: none;
+  background: transparent;
   color: var(--app-text);
 }
 
 .react-flow__edge-path {
-  stroke: rgba(255, 255, 255, 0.2);
-  stroke-width: 2;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 2.5;
   transition: stroke 0.3s, stroke-width 0.3s;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #3b82f6 !important;
-  stroke-width: 3 !important;
-  filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8)) !important;
+  stroke: var(--brand-red) !important;
+  stroke-width: 3.5 !important;
+  filter: drop-shadow(0 0 8px var(--hud-red-glow)) !important;
 }
 
 .react-flow__edge:hover .react-flow__edge-path {
-  stroke: rgba(255, 255, 255, 0.6);
-  stroke-width: 3;
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 3.5;
 }
 
 .react-flow__connection-path {

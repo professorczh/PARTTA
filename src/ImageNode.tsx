@@ -21,7 +21,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   
-  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     addUploadedImage: state.addUploadedImage,
     removeUploadedImage: state.removeUploadedImage,
@@ -36,7 +36,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     onConnect: state.onConnect,
     setEdges: state.setEdges,
     edges: state.edges,
-    nodes: state.nodes
+    nodes: state.nodes,
+    isRecognitionMode: state.isRecognitionMode
   })));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -86,8 +87,11 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     };
   }, [draggingPinId, selectedPinId, id, removePin, updatePin]);
 
+  const [isHovered, setIsHovered] = useState(false);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [isPromptActive, setIsPromptActive] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
   const historyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const history = data.history || [];
@@ -136,17 +140,48 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     }, 50);
   };
 
+  const onLocalDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const items = Array.from(e.dataTransfer.items);
+    const hasImage = items.some(item => item.type.startsWith('image/'));
+    if (hasImage) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const onLocalDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const onLocalDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    const imageFile = files.find(file => file.type.startsWith('image/'));
+
+    if (imageFile) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        updateNodeData(id, { 
+          outputs: { ...data.outputs, image: base64 },
+          outputVersions: { ...data.outputVersions, image: (data.outputVersions?.image || 0) + 1 }
+        });
+      };
+      reader.readAsDataURL(imageFile);
+    }
+  };
+
   const uploadedImages = data.uploadedImages || [];
   const currentOutput = previewImageUrl || data.outputs?.image;
   const hasContent = currentOutput || uploadedImages.length > 0;
 
   const handleImageClick = (e: React.MouseEvent) => {
-    if (!hasContent) return;
-    
-    // Only allow PINs on the main image (first in history or uploaded)
-    const isMainImage = !previewImageUrl || (history.length > 0 && previewImageUrl === history[0].url);
-    if (!isMainImage) return;
-
     // Deselect current PIN if clicking background
     if (selectedPinId) {
       setSelectedPinId(null);
@@ -154,8 +189,19 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
     if (!isCtrlPressed) return;
     
+    // If no content, we can still click to create a new node, but we can't "pin" an actual object
+    // However, for UX consistency, we'll allow it.
+    
+    // Only allow PINs on the main image (first in history or uploaded)
+    const isMainImage = !previewImageUrl || (history.length > 0 && previewImageUrl === history[0].url);
+    if (!isMainImage && hasContent) return;
+    
     // Stop propagation to prevent node selection/dragging if we are adding a PIN
+    // But we manually select the node to ensure it's ready for Ctrl+C
     e.stopPropagation();
+    if (!selected) {
+      setNodes(nds => nds.map(n => n.id === id ? { ...n, selected: true } : { ...n, selected: false }));
+    }
     
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
@@ -164,7 +210,10 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     const pinId = `pin-${Date.now()}`;
     const pinLabel = (data.pins?.length || 0) + 1;
     
-    // Logic for target node
+    // Logic for target node selection
+    // CRITICAL: We explicitly exclude the current node (id !== id) because PINs 
+    // are spatial outputs of the source, and should only be used as inputs for 
+    // downstream/target nodes. They never belong in the source node's own prompt.
     const targetNode = nodes.find(n => n.selected && n.id !== id);
     
     const xPos = props.positionAbsoluteX;
@@ -173,8 +222,14 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     if (targetNode) {
       // Insert into target node
       const mentionText = `[@ Pin_${pinLabel} (${data.shortId})]`;
-      const newPrompt = targetNode.data.prompt.trim() 
-        ? `${targetNode.data.prompt.trim()} ${mentionText}` 
+      
+      // Smart Substitution: Remove parent image mention if it exists
+      // The parent image mention looks like [@ IMG_... (SHORT_ID)]
+      const parentMentionRegex = new RegExp(`\\[@ IMG_[^\\]]*? \\(${data.shortId}\\)\\]`, 'g');
+      let newPrompt = targetNode.data.prompt.replace(parentMentionRegex, '').trim();
+      
+      newPrompt = newPrompt 
+        ? `${newPrompt} ${mentionText}` 
         : mentionText;
       
       updateNodeData(targetNode.id, { prompt: newPrompt });
@@ -268,14 +323,18 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       animate={{ 
         scale: 1, 
         opacity: 1,
-        boxShadow: isTargetForPin ? '0 0 20px rgba(239, 68, 68, 0.4)' : 'none'
+        boxShadow: (isCtrlPressed && isHovered) ? '0 0 20px rgba(239, 68, 68, 0.4)' : 'none'
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       transition={{ type: 'spring', duration: 0.5, bounce: 0.4 }}
       className={cn(
         "w-full h-full flex flex-col glass-panel rounded-2xl relative transition-all duration-300",
         selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl shadow-red-900/20",
         data.isLoading && "animate-pulse ring-1 ring-blue-500/50",
-        isTargetForPin && "ring-2 ring-red-500 animate-pulse"
+        isCtrlPressed && "ring-2 ring-red-500/30",
+        isCtrlPressed && isHovered && "ring-red-500 animate-pulse",
+        data.isCloning && "border-dashed border-2 border-[var(--brand-red)]/60"
       )}
     >
       <NodeResizer 
@@ -342,15 +401,27 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         <div 
           ref={imageContainerRef}
           onClick={handleImageClick}
+          onDragOver={onLocalDragOver}
+          onDragLeave={onLocalDragLeave}
+          onDrop={onLocalDrop}
           className={cn(
             "relative flex-1 rounded-xl overflow-hidden border group transition-all duration-300",
             hasContent 
               ? "bg-black border-[var(--app-border)]" 
               : "bg-white/[0.03] border-dashed border-white/10 hover:border-white/20 hover:bg-white/[0.05]",
-            isCtrlPressed && hasContent && "cursor-crosshair"
+            isCtrlPressed && hasContent && "cursor-crosshair",
+            isDraggingOver && "border-[var(--brand-red)] bg-[var(--brand-red)]/10 ring-2 ring-[var(--brand-red)]/20"
           )}
         >
-          {isCtrlPressed && hasContent && (
+          {isDraggingOver && (
+            <div className="absolute inset-0 z-[110] bg-[var(--brand-red)]/5 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 border-2 border-[var(--brand-red)]/40 rounded-xl">
+              <div className="w-8 h-8 rounded-full bg-[var(--brand-red)] flex items-center justify-center text-white shadow-lg shadow-red-500/20">
+                <ImageIcon size={16} />
+              </div>
+              <span className="text-[9px] font-bold text-white uppercase tracking-widest bg-black/60 px-2 py-1 rounded border border-white/10">Drop to Replace</span>
+            </div>
+          )}
+          {isCtrlPressed && isHovered && (
             <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center">
               <div className="bg-white/10 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white/70 font-mono uppercase tracking-tighter border border-white/10">
                 PIN Mode
@@ -404,13 +475,37 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
               }}
             >
               <div className={cn(
-                "w-6 h-6 rounded-full border-[1.5px] shadow-[0_0_4px_rgba(0,0,0,0.8)] flex items-center justify-center text-white text-[10px] font-bold select-none transition-all",
+                "w-6 h-6 rounded-full border-[1.5px] shadow-[0_0_4px_rgba(0,0,0,0.8)] flex items-center justify-center text-white text-[10px] font-bold select-none transition-all relative",
                 selectedPinId === pin.id 
                   ? "bg-yellow-500 border-white scale-110 ring-2 ring-yellow-500/50" 
                   : "bg-[#ef4444] border-white hover:scale-110"
               )}>
-                {index + 1}
+                {pin.isRecognizing ? (
+                  <Loader2 size={12} className="animate-spin text-white" />
+                ) : (
+                  index + 1
+                )}
               </div>
+
+              {/* Editable Label - Only shows when node is selected */}
+              {selected && (
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center pointer-events-auto">
+                  <div className="bg-black/80 backdrop-blur-md border border-white/20 rounded-lg px-2 py-1 shadow-xl flex items-center gap-2 min-w-[60px]">
+                    <span className="text-[9px] font-bold text-white/40">#{index + 1}</span>
+                    <input
+                      type="text"
+                      value={pin.label || ''}
+                      onChange={(e) => updatePin(id, pin.id, { label: e.target.value })}
+                      placeholder={pin.isRecognizing ? "Recognizing..." : "Label..."}
+                      className="bg-transparent border-none outline-none text-[10px] text-white font-medium p-0 w-20 placeholder:text-white/20"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                  {/* Connector line to pin */}
+                  <div className="w-px h-2 bg-white/20" />
+                </div>
+              )}
 
               {/* Hover Delete Icon */}
               <button

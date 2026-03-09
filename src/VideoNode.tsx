@@ -21,15 +21,17 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   
-  const { updateNodeData, providers, globalDefaults, isDemoMode } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, providers, globalDefaults, isDemoMode, edges } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     providers: state.providers,
     globalDefaults: state.globalDefaults,
-    isDemoMode: state.isDemoMode
+    isDemoMode: state.isDemoMode,
+    edges: state.edges
   })));
 
   const handleRun = async () => {
     const nodes = useTapStore.getState().nodes;
+    const edges = useTapStore.getState().edges;
     const activeOutputMode = data.activeOutputMode || 'video';
     
     const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
@@ -49,7 +51,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
     updateNodeData(id, { isLoading: true });
 
     try {
-      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt, nodes, id);
+      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt, nodes, edges, id);
       
       const response = await aiService.generate({
         prompt: resolvedPrompt,
@@ -86,7 +88,8 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
     <div 
       className={cn(
         "w-[360px] aspect-square flex flex-col glass-panel rounded-2xl relative",
-        selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl"
+        selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl",
+        data.isCloning && "border-dashed border-2 border-[var(--brand-red)]/60"
       )}
     >
       {/* Header */}

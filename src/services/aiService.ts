@@ -8,11 +8,14 @@ export interface AIServiceRequest {
   isDemoMode?: boolean;
   aspectRatio?: string;
   imageSize?: string;
+  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'off';
+  thoughtSignature?: string;
 }
 
 export interface AIServiceResponse {
   text?: string;
   imageUrl?: string;
+  thoughtSignature?: string;
   error?: string;
 }
 
@@ -91,6 +94,45 @@ export const aiService = {
     }
   },
 
+  async urlToBase64(url: string): Promise<string> {
+    try {
+      // Use proxy to avoid CORS issues
+      const response = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: url,
+          method: 'GET'
+        })
+      });
+      
+      if (!response.ok) throw new Error('Proxy request failed');
+      
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.error('Failed to convert URL to Base64 (via proxy):', e);
+      // Fallback to direct fetch if proxy fails
+      try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e2) {
+        return url;
+      }
+    }
+  },
+
   async callMock(request: AIServiceRequest): Promise<AIServiceResponse> {
     const { modelId, prompt, aspectRatio } = request;
     await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
@@ -105,8 +147,10 @@ export const aiService = {
       else if (aspectRatio === '3:4') { width = 768; height = 1024; }
       else if (aspectRatio === '21:9') { width = 1024; height = 438; }
 
-      // Return a random image for both image and video mocks
-      return { imageUrl: `https://picsum.photos/seed/${Math.random()}/${width}/${height}` };
+      const imageUrl = `https://picsum.photos/seed/${Math.random()}/${width}/${height}`;
+      const base64Image = await this.urlToBase64(imageUrl);
+      
+      return { imageUrl: base64Image };
     }
 
     return { 
@@ -115,65 +159,110 @@ export const aiService = {
   },
 
   async callGemini(request: AIServiceRequest): Promise<AIServiceResponse> {
-    const { provider, modelId, prompt, images, aspectRatio, imageSize } = request;
+    const { provider, modelId, prompt, images, aspectRatio, imageSize, thinkingLevel, thoughtSignature } = request;
     
-    // For Gemini, we use the proxy to avoid CORS and keep it consistent
     const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${provider.apiKey}`;
     
+    const parts: any[] = [
+      { text: prompt },
+      ...(images || []).map(img => ({
+        inline_data: {
+          mime_type: img.mimeType,
+          data: img.data.split(',')[1] || img.data
+        }
+      }))
+    ];
+
+    // If we have a thought signature from a previous turn, we must include it
+    if (thoughtSignature) {
+      parts.unshift({ thoughtSignature });
+    }
+
     const contents = [
       {
         role: "user",
-        parts: [
-          { text: prompt },
-          ...(images || []).map(img => ({
-            inline_data: {
-              mime_type: img.mimeType,
-              data: img.data.split(',')[1] || img.data
-            }
-          }))
-        ]
+        parts
       }
     ];
 
+    const modelConfig = provider.models.find(m => m.id === modelId);
+    const supportsImage = modelConfig?.capabilities.image;
+
+    const hasPins = prompt.includes('[PIN_') && prompt.includes('coordinate: [');
+    const systemInstruction = hasPins 
+      ? "You are a precise image analysis and editing expert. All coordinates provided in the prompt are normalized to a 1000x1000 grid representing the full visible area of each image, regardless of its original aspect ratio. Coordinate [0,0] represents the top-left corner, and [1000,1000] represents the bottom-right corner. When asked to analyze or edit a specific coordinate, locate it precisely on the corresponding image."
+      : undefined;
+
     const body: any = { 
       contents,
-      generationConfig: {
-        responseModalities: ["TEXT", "IMAGE"],
-        imageConfig: {
-          aspectRatio: aspectRatio || '1:1',
-          imageSize: imageSize || '1K'
-        }
-      }
+      generationConfig: {},
+      systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined
     };
 
+    if (thinkingLevel && thinkingLevel !== 'off' && modelId.startsWith('gemini-3')) {
+      body.generationConfig.thinkingConfig = {
+        thinkingLevel: thinkingLevel
+      };
+    }
+
+    if (supportsImage) {
+      body.generationConfig.responseModalities = ["TEXT", "IMAGE"];
+      body.generationConfig.imageConfig = {
+        aspectRatio: aspectRatio || '1:1',
+        imageSize: imageSize || '1K'
+      };
+    }
+
     try {
-      const response = await fetch('/api/proxy', {
+      const response = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUrl,
-          method: 'POST',
-          body
-        })
+        body: JSON.stringify(body)
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type");
+      
+      let data: any;
+      const responseText = await response.text();
+      
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error("Failed to parse JSON response:", responseText.substring(0, 200));
+        // If it starts with { it might be a partial or malformed JSON, but let's try to be helpful
+        if (responseText.trim().startsWith('{')) {
+          return { error: `Malformed JSON response: ${responseText.substring(0, 100)}` };
+        }
+        return { error: `Server returned non-JSON response: ${responseText.substring(0, 100)}` };
+      }
       
       if (data.error) {
         return { error: data.error.message || JSON.stringify(data.error) };
       }
 
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const candidate = data.candidates?.[0];
+      const contentParts = candidate?.content?.parts || [];
+      
+      // Extract text
+      const textPart = contentParts.find((p: any) => p.text);
+      const text = textPart?.text;
+
+      // Extract thought signature
+      const signaturePart = contentParts.find((p: any) => p.thoughtSignature);
+      const newSignature = signaturePart?.thoughtSignature;
       
       // Handle Image Generation for Gemini
-      const imagePart = data.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData || p.inline_data);
+      const imagePart = contentParts.find((p: any) => p.inlineData || p.inline_data);
       if (imagePart) {
         const img = imagePart.inlineData || imagePart.inline_data;
         const mimeType = img.mimeType || img.mime_type;
-        return { imageUrl: `data:${mimeType};base64,${img.data}` };
+        return { 
+          imageUrl: `data:${mimeType};base64,${img.data}`,
+          thoughtSignature: newSignature 
+        };
       }
 
-      return { text };
+      return { text, thoughtSignature: newSignature };
     } catch (err: any) {
       return { error: err.message };
     }
@@ -201,22 +290,16 @@ export const aiService = {
     ];
 
     try {
-      const response = await fetch('/api/proxy', {
+      const response = await fetch(targetUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          targetUrl,
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${provider.apiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: {
-            model: modelId,
-            messages,
-            // Add some defaults
-            max_tokens: 1000
-          }
+          model: modelId,
+          messages,
+          max_tokens: 1000
         })
       });
 

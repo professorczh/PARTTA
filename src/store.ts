@@ -53,6 +53,7 @@ export interface Pin {
   x: number; // 0 to 1
   y: number; // 0 to 1
   label?: string;
+  isRecognizing?: boolean;
 }
 
 export interface UploadedImage {
@@ -63,10 +64,12 @@ export interface UploadedImage {
 
 export interface HistoryItem {
   id: string;
-  url: string;
+  url?: string;
+  text?: string;
   prompt: string;
   config: any;
   timestamp: number;
+  thoughtSignature?: string;
 }
 
 export interface NodeData extends Record<string, unknown> {
@@ -95,6 +98,7 @@ export interface NodeData extends Record<string, unknown> {
   };
   activeOutputMode: 'text' | 'image' | 'video';
   viewMode?: 'edit' | 'prev' | 'raw';
+  promptViewMode?: 'edit' | 'prev' | 'raw';
   shortId?: string; // e.g. IMG_1
   isLoading?: boolean;
   pins?: Pin[];
@@ -103,11 +107,14 @@ export interface NodeData extends Record<string, unknown> {
   selectedHistoryId?: string;
   parentId?: string; // For tracing origin
   isLocked?: boolean; // Fully solidified after first run/upload
+  isGenerated?: boolean; // Whether the output is AI generated (intercepts pass-through)
   includeTitleInOutput?: boolean; // Whether to include label in output string
+  thoughtSignature?: string; // For Gemini 3 multi-turn reasoning
   config?: {
     mask?: string;
     model?: string;
     aspectRatio?: string;
+    thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'off';
     [key: string]: any;
   };
 }
@@ -143,8 +150,10 @@ interface TapState {
     video: string;
   };
   isDemoMode: boolean;
+  isRecognitionMode: boolean;
   isCtrlPressed: boolean;
   setDemoMode: (enabled: boolean) => void;
+  setRecognitionMode: (enabled: boolean) => void;
   setCtrlPressed: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
   updateProvider: (id: string, provider: Partial<ProviderConfig>) => void;
@@ -160,12 +169,46 @@ interface TapState {
   setRememberPinTargetChoice: (remember: boolean) => void;
   lastPinTargetId: string | null;
   setLastPinTargetId: (id: string | null) => void;
+  skipOverwriteConfirm: boolean;
+  setSkipOverwriteConfirm: (skip: boolean) => void;
+  // Undo/Redo
+  undo: () => void;
+  redo: () => void;
+  pushHistory: () => void;
+  // Interaction Mode
+  interactionMode: 'selection' | 'pan';
+  setInteractionMode: (mode: 'selection' | 'pan') => void;
+  // Clipboard
+  clipboard: { nodes: TapNode[], edges: Edge[] } | null;
+  copyNodes: (nodes: TapNode[]) => void;
+  pasteNodes: (position?: { x: number, y: number }, data?: { nodes: TapNode[], edges: Edge[] }) => void;
+  cutNodes: (nodes: TapNode[]) => void;
+  cloneNodes: (nodes: TapNode[]) => void;
+}
+
+interface HistoryState {
+  nodes: TapNode[];
+  edges: Edge[];
 }
 
 export const useTapStore = create<TapState>()(
   persist(
-    (set, get) => ({
-      nodes: [
+    (set, get) => {
+      const undoStack: HistoryState[] = [];
+      const redoStack: HistoryState[] = [];
+
+      const pushHistory = () => {
+        const { nodes, edges } = get();
+        undoStack.push({ 
+          nodes: JSON.parse(JSON.stringify(nodes)), 
+          edges: JSON.parse(JSON.stringify(edges)) 
+        });
+        if (undoStack.length > 100) undoStack.shift();
+        redoStack.length = 0; // Clear redo stack on new action
+      };
+
+      return {
+        nodes: [
         {
           id: 'node-1',
           type: 'text-node',
@@ -175,6 +218,7 @@ export const useTapStore = create<TapState>()(
             type: 'text', 
             prompt: 'A futuristic city with red neon lights',
             shortId: 'TXT_1',
+            includeTitleInOutput: false,
             outputs: {},
             outputVersions: { text: 0, image: 0, video: 0, prompt: 0 },
             activeOutputMode: 'text'
@@ -182,6 +226,8 @@ export const useTapStore = create<TapState>()(
         },
       ],
       edges: [],
+      interactionMode: 'pan',
+      setInteractionMode: (mode) => set({ interactionMode: mode }),
       providers: [
         {
           id: 'google-gemini',
@@ -191,9 +237,11 @@ export const useTapStore = create<TapState>()(
           apiKey: '',
           enabled: false,
           models: [
+            { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash-Lite', capabilities: { text: true, image: false, video: false }, protocol: 'gemini', enabled: true },
             { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', capabilities: { text: true, image: false, video: false }, protocol: 'gemini', enabled: true },
             { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', capabilities: { text: true, image: false, video: false }, protocol: 'gemini', enabled: true },
             { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Image', capabilities: { text: false, image: true, video: false }, protocol: 'gemini', enabled: true, supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'], supportedResolutions: ['1K'] },
+            { id: 'gemini-3.1-flash-image-preview', name: 'Gemini 3.1 Flash Image', capabilities: { text: false, image: true, video: false }, protocol: 'gemini', enabled: true, supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:3', '1:4', '1:8', '4:1', '8:1'], supportedResolutions: ['512px', '1K', '2K', '4K'] },
             { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', capabilities: { text: false, image: true, video: false }, protocol: 'gemini', enabled: true, supportedRatios: ['1:1', '16:9', '9:16', '3:4', '4:3'], supportedResolutions: ['1K', '2K', '4K'] },
             { id: 'veo-3.1-fast-generate-preview', name: 'Veo 3.1 Fast', capabilities: { text: false, image: false, video: true }, protocol: 'gemini', enabled: true, supportedRatios: ['16:9', '9:16'], supportedResolutions: ['720p', '1080p'] },
           ]
@@ -205,9 +253,14 @@ export const useTapStore = create<TapState>()(
         video: 'google-gemini:veo-3.1-fast-generate-preview',
       },
       isDemoMode: true, // Default to true as per user's preference for easy demo
+      isRecognitionMode: false,
       isCtrlPressed: false,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
-      setCtrlPressed: (enabled: boolean) => set({ isCtrlPressed: enabled }),
+      setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
+      setCtrlPressed: (enabled: boolean) => {
+        if (get().isCtrlPressed === enabled) return;
+        set({ isCtrlPressed: enabled });
+      },
       onNodesChange: (changes: NodeChange<TapNode>[]) => {
         set({
           nodes: applyNodeChanges(changes, get().nodes),
@@ -219,6 +272,7 @@ export const useTapStore = create<TapState>()(
         });
       },
       onConnect: (connection: Connection) => {
+        pushHistory();
         const sourceHandle = connection.sourceHandle || '';
         let color = '#ef4444'; // Default Red
         
@@ -242,7 +296,7 @@ export const useTapStore = create<TapState>()(
           const targetNode = nodes.find(n => n.id === connection.target);
           const sourceNode = nodes.find(n => n.id === connection.source);
           
-          if (targetNode && sourceNode) {
+          if (targetNode && sourceNode && targetNode.id !== sourceNode.id) {
             const typePrefix = sourceNode.type === 'image-node' ? 'IMG' : sourceNode.type === 'video-node' ? 'VID' : 'TEXT';
             const mentionText = `[@ ${typePrefix}_${sourceNode.data.label} (${sourceNode.data.shortId})]`;
             
@@ -259,6 +313,7 @@ export const useTapStore = create<TapState>()(
       setNodes: (nodes) => set({ nodes }),
       setEdges: (edges) => set({ edges }),
       addNode: (node) => {
+        pushHistory();
         const nodes = get().nodes;
         const type = node.type || 'text-node';
         let prefix = 'TXT';
@@ -286,7 +341,7 @@ export const useTapStore = create<TapState>()(
             ...node.data,
             label: node.data.label || `Node ${nodes.length + 1}`,
             shortId,
-            includeTitleInOutput: node.data.includeTitleInOutput ?? true,
+            includeTitleInOutput: node.data.includeTitleInOutput ?? false,
             outputs: node.data.outputs || {},
             outputVersions: node.data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 },
             activeOutputMode: node.data.activeOutputMode || 'text',
@@ -299,6 +354,7 @@ export const useTapStore = create<TapState>()(
         set({ nodes: [...nodes, newNode] });
       },
       updateNode: (id, updatedNode) => {
+        pushHistory();
         set({
           nodes: get().nodes.map((node) => 
             node.id === id ? { ...node, ...updatedNode } : node
@@ -306,6 +362,8 @@ export const useTapStore = create<TapState>()(
         });
       },
       updateNodeData: (id, data) => {
+        // Only push history for significant data changes (like prompt)
+        if (data.prompt !== undefined) pushHistory();
         set({
           nodes: get().nodes.map((node) => {
             if (node.id !== id) return node;
@@ -336,13 +394,38 @@ export const useTapStore = create<TapState>()(
         });
       },
       addPin: (nodeId, pin) => {
+        const state = get();
+        const isRecognitionMode = state.isRecognitionMode;
+        const isDemoMode = state.isDemoMode;
+
+        // Add the pin immediately
         set({
-          nodes: get().nodes.map((node) => 
+          nodes: state.nodes.map((node) => 
             node.id === nodeId 
               ? { ...node, data: { ...node.data, pins: [...(node.data.pins || []), pin] } } 
               : node
           ),
         });
+
+        // If recognition mode is on, trigger recognition
+        if (isRecognitionMode) {
+          state.updatePin(nodeId, pin.id, { isRecognizing: true });
+          
+          // Mock recognition for demo mode
+          if (isDemoMode) {
+            setTimeout(() => {
+              const mockLabels = ['Apple', 'Banana', 'Carrot', 'Laptop', 'Coffee Cup', 'Tree', 'Building', 'Cat', 'Dog'];
+              const randomLabel = mockLabels[Math.floor(Math.random() * mockLabels.length)];
+              state.updatePin(nodeId, pin.id, { 
+                label: randomLabel, 
+                isRecognizing: false 
+              });
+            }, 1500);
+          } else {
+            // Real mode logic would go here (calling Gemini)
+            // For now, we'll just keep it recognizing or add a placeholder
+          }
+        }
       },
       updatePin: (nodeId, pinId, updates) => {
         set({
@@ -487,6 +570,7 @@ export const useTapStore = create<TapState>()(
         isDemoMode: enabled
       }),
       deleteNodes: (nodesToDelete) => {
+        pushHistory();
         const idsToDelete = nodesToDelete.map(n => n.id);
         const currentNodes = get().nodes;
         const currentEdges = get().edges;
@@ -496,13 +580,266 @@ export const useTapStore = create<TapState>()(
           edges: currentEdges.filter(e => !idsToDelete.includes(e.source) && !idsToDelete.includes(e.target))
         });
       },
+      skipOverwriteConfirm: false,
+      setSkipOverwriteConfirm: (skip) => set({ skipOverwriteConfirm: skip }),
+
+      undo: () => {
+        if (undoStack.length === 0) return;
+        const currentState = { 
+          nodes: JSON.parse(JSON.stringify(get().nodes)), 
+          edges: JSON.parse(JSON.stringify(get().edges)) 
+        };
+        redoStack.push(currentState);
+        
+        const prevState = undoStack.pop()!;
+        set({ nodes: prevState.nodes, edges: prevState.edges });
+      },
+
+      redo: () => {
+        if (redoStack.length === 0) return;
+        const currentState = { 
+          nodes: JSON.parse(JSON.stringify(get().nodes)), 
+          edges: JSON.parse(JSON.stringify(get().edges)) 
+        };
+        undoStack.push(currentState);
+        
+        const nextState = redoStack.pop()!;
+        set({ nodes: nextState.nodes, edges: nextState.edges });
+      },
+
+      pushHistory,
+
+      clipboard: null,
+
+      copyNodes: (nodesToCopy) => {
+        const ids = nodesToCopy.map(n => n.id);
+        const edgesToCopy = get().edges.filter(e => ids.includes(e.source) && ids.includes(e.target));
+        
+        const clipboardData = { 
+          nodes: JSON.parse(JSON.stringify(nodesToCopy)), 
+          edges: JSON.parse(JSON.stringify(edgesToCopy)) 
+        };
+
+        // Always write the JSON to system clipboard for robust cross-tab/session pasting
+        const serialized = `TAP_FLOW_CLIPBOARD:${JSON.stringify(clipboardData)}`;
+        navigator.clipboard.writeText(serialized).catch(() => {});
+
+        set({ clipboard: clipboardData });
+      },
+
+      pasteNodes: (position, data) => {
+        const { clipboard: internalClipboard, nodes: currentNodes, edges: currentEdges } = get();
+        const clipboard = data || internalClipboard;
+        if (!clipboard) return;
+
+        pushHistory();
+
+        const newNodes: TapNode[] = [];
+        const newEdges: Edge[] = [];
+        const idMap: Record<string, string> = {};
+        const shortIdMap: Record<string, string> = {};
+
+        // 1. Calculate offset
+        let offsetX = 20;
+        let offsetY = 20;
+
+        if (position) {
+          const minX = Math.min(...clipboard.nodes.map(n => n.position.x));
+          const minY = Math.min(...clipboard.nodes.map(n => n.position.y));
+          offsetX = position.x - minX;
+          offsetY = position.y - minY;
+        }
+
+        // 2. Clone Nodes
+        clipboard.nodes.forEach(node => {
+          const newId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          idMap[node.id] = newId;
+
+          // Generate new ShortId
+          const type = node.type || 'text-node';
+          let prefix = 'TXT';
+          if (type === 'image-node') prefix = 'IMG';
+          else if (type === 'video-node') prefix = 'VID';
+          else if (type === 'generator-node') prefix = 'GEN';
+
+          const existingNumbers = [...currentNodes, ...newNodes]
+            .map(n => {
+              const sId = n.data.shortId || '';
+              if (sId.startsWith(`${prefix}_`)) {
+                const num = parseInt(sId.split('_')[1]);
+                return isNaN(num) ? 0 : num;
+              }
+              return 0;
+            });
+          const maxNum = Math.max(0, ...existingNumbers);
+          const newShortId = `${prefix}_${maxNum + 1}`;
+          shortIdMap[node.data.shortId || ''] = newShortId;
+
+          const newNode: TapNode = {
+            ...JSON.parse(JSON.stringify(node)),
+            id: newId,
+            position: {
+              x: node.position.x + offsetX,
+              y: node.position.y + offsetY
+            },
+            selected: true,
+            data: {
+              ...node.data,
+              shortId: newShortId,
+              isLoading: false,
+              isLocked: false,
+              history: [],
+              selectedHistoryId: undefined
+            }
+          };
+          newNodes.push(newNode);
+        });
+
+        // 3. Clone Edges (Internal only)
+        clipboard.edges.forEach(edge => {
+          const newEdge: Edge = {
+            ...JSON.parse(JSON.stringify(edge)),
+            id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            source: idMap[edge.source],
+            target: idMap[edge.target]
+          };
+          newEdges.push(newEdge);
+        });
+
+        // 4. Smart Reference Remapping
+        newNodes.forEach(node => {
+          if (node.data.prompt) {
+            let newPrompt = node.data.prompt;
+            Object.entries(shortIdMap).forEach(([oldShortId, newShortId]) => {
+              // Replace mentions like [@ Label (OLD_ID)] with [@ Label (NEW_ID)]
+              // We need to be careful to only replace the ID part
+              const regex = new RegExp(`\\(( ${oldShortId} )\\)`, 'g');
+              newPrompt = newPrompt.replace(regex, `(${newShortId})`);
+            });
+            node.data.prompt = newPrompt;
+          }
+        });
+
+        // Deselect current nodes
+        const updatedCurrentNodes = currentNodes.map(n => ({ ...n, selected: false }));
+
+        set({
+          nodes: [...updatedCurrentNodes, ...newNodes],
+          edges: [...currentEdges, ...newEdges]
+        });
+      },
+
+      cutNodes: (nodesToCut) => {
+        get().copyNodes(nodesToCut);
+        pushHistory();
+        get().deleteNodes(nodesToCut);
+      },
+
+      cloneNodes: (nodesToClone) => {
+        const { nodes: currentNodes, edges: currentEdges } = get();
+        
+        const newNodes: TapNode[] = [];
+        const newEdges: Edge[] = [];
+        const idMap: Record<string, string> = {};
+        const shortIdMap: Record<string, string> = {};
+
+        nodesToClone.forEach(node => {
+          const newId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          idMap[node.id] = newId;
+
+          const type = node.type || 'text-node';
+          let prefix = 'TXT';
+          if (type === 'image-node') prefix = 'IMG';
+          else if (type === 'video-node') prefix = 'VID';
+          else if (type === 'generator-node') prefix = 'GEN';
+
+          const existingNumbers = [...currentNodes, ...newNodes]
+            .map(n => {
+              const sId = n.data.shortId || '';
+              if (sId.startsWith(`${prefix}_`)) {
+                const num = parseInt(sId.split('_')[1]);
+                return isNaN(num) ? 0 : num;
+              }
+              return 0;
+            });
+          const maxNum = Math.max(0, ...existingNumbers);
+          const newShortId = `${prefix}_${maxNum + 1}`;
+          shortIdMap[node.data.shortId || ''] = newShortId;
+
+          const newNode: TapNode = {
+            ...JSON.parse(JSON.stringify(node)),
+            id: newId,
+            selected: false,
+            data: {
+              ...node.data,
+              shortId: newShortId,
+              isCloning: false,
+              isLoading: false,
+              isLocked: false,
+              history: [],
+              selectedHistoryId: undefined
+            }
+          };
+          newNodes.push(newNode);
+        });
+
+        // Clone internal edges
+        const ids = nodesToClone.map(n => n.id);
+        const internalEdges = currentEdges.filter(e => ids.includes(e.source) && ids.includes(e.target));
+        internalEdges.forEach(edge => {
+          newEdges.push({
+            ...JSON.parse(JSON.stringify(edge)),
+            id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            source: idMap[edge.source],
+            target: idMap[edge.target]
+          });
+        });
+
+        // Clone external edges
+        const externalEdges = currentEdges.filter(e => 
+          (ids.includes(e.source) && !ids.includes(e.target)) || 
+          (!ids.includes(e.source) && ids.includes(e.target))
+        );
+        externalEdges.forEach(edge => {
+          newEdges.push({
+            ...JSON.parse(JSON.stringify(edge)),
+            id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            source: ids.includes(edge.source) ? idMap[edge.source] : edge.source,
+            target: ids.includes(edge.target) ? idMap[edge.target] : edge.target
+          });
+        });
+
+        // Smart Reference Remapping
+        newNodes.forEach(node => {
+          if (node.data.prompt) {
+            let newPrompt = node.data.prompt;
+            Object.entries(shortIdMap).forEach(([oldShortId, newShortId]) => {
+              const regex = new RegExp(`\\( ${oldShortId} \\)`, 'g');
+              newPrompt = newPrompt.replace(regex, `(${newShortId})`);
+            });
+            node.data.prompt = newPrompt;
+          }
+        });
+
+        set({
+          nodes: [
+            ...currentNodes.map(n => 
+              nodesToClone.some(ntc => ntc.id === n.id) 
+                ? { ...n, data: { ...n.data, isCloning: true } } 
+                : n
+            ),
+            ...newNodes
+          ],
+          edges: [...currentEdges, ...newEdges]
+        });
+      },
       skipDeleteConfirm: false,
       setSkipDeleteConfirm: (skip) => set({ skipDeleteConfirm: skip }),
       rememberPinTargetChoice: false,
       setRememberPinTargetChoice: (remember) => set({ rememberPinTargetChoice: remember }),
       lastPinTargetId: null,
       setLastPinTargetId: (id) => set({ lastPinTargetId: id }),
-    }),
+    }},
     {
       name: 'tap-storage',
       partialize: (state) => ({ 
@@ -524,8 +861,10 @@ export const useTapStore = create<TapState>()(
         providers: state.providers,
         globalDefaults: state.globalDefaults,
         isDemoMode: state.isDemoMode,
+        isRecognitionMode: state.isRecognitionMode,
         isCtrlPressed: false, // Don't persist key state
         skipDeleteConfirm: state.skipDeleteConfirm,
+        skipOverwriteConfirm: state.skipOverwriteConfirm,
         rememberPinTargetChoice: state.rememberPinTargetChoice,
         lastPinTargetId: state.lastPinTargetId
       }),

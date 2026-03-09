@@ -32,6 +32,7 @@ export const ShellNode = (props: NodeProps<TapNode>) => {
 
   const handleRun = async () => {
     const nodes = useTapStore.getState().nodes;
+    const edges = useTapStore.getState().edges;
     const activeOutputMode = data.activeOutputMode || 'text';
     
     const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
@@ -51,7 +52,7 @@ export const ShellNode = (props: NodeProps<TapNode>) => {
     updateNodeData(id, { isLoading: true });
 
     try {
-      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt, nodes, id);
+      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt, nodes, edges, id);
       
       const response = await aiService.generate({
         prompt: resolvedPrompt,
@@ -146,7 +147,8 @@ export const ShellNode = (props: NodeProps<TapNode>) => {
       }}
       className={cn(
         "w-[360px] aspect-square glass-panel rounded-2xl transition-all duration-500 relative flex flex-col border-2",
-        selected && "shadow-2xl z-50"
+        selected && "shadow-2xl z-50",
+        data.isCloning && "border-dashed border-[var(--brand-red)]/60"
       )}
     >
       {/* Header */}
@@ -226,7 +228,12 @@ export const ShellNode = (props: NodeProps<TapNode>) => {
       <NodePromptInput node={props as unknown as TapNode} selected={!!selected} onRun={handleRun} />
 
       {/* Ports */}
-      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
+      <div 
+        className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto"
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        style={{ pointerEvents: dragging ? 'none' : 'auto' }}
+      >
         <MagneticInput isTargetOfConnection={isTargetOfConnection} dragging={dragging} />
       </div>
     </motion.div>

@@ -88,11 +88,11 @@ export const MagneticPort = ({
           type={isSource ? "source" : "target"} 
           position={isSource ? Position.Right : Position.Left} 
           id={portId}
-          isConnectableStart={true}
+          isConnectable={!dragging}
           className="!bg-transparent !border-none !opacity-0 z-30 !cursor-crosshair pointer-events-auto" 
           style={{ 
-            width: '100%',
-            height: '100%',
+            width: '8px',
+            height: '8px',
             top: '50%',
             left: isSource ? '100%' : '0%',
             transform: 'translate(-50%, -50%)',
@@ -160,11 +160,11 @@ export const MagneticInput = ({ isTargetOfConnection, dragging }: MagneticInputP
           type="target" 
           position={Position.Left} 
           id="input-main"
-          isConnectableStart={true}
+          isConnectable={!dragging}
           className="!bg-transparent !border-none !opacity-0 z-30 !cursor-crosshair pointer-events-auto" 
           style={{ 
-            width: '100%',
-            height: '100%',
+            width: '8px',
+            height: '8px',
             top: '50%',
             left: '0%',
             transform: 'translate(-50%, -50%)',

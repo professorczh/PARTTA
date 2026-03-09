@@ -12,6 +12,15 @@
   user-select: none;
   cursor: default;
   white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.mention-chip[data-connected="false"] {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.3);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  text-decoration: line-through;
+  opacity: 0.8;
 }
 
 /* Hide the default mention suggestion list if we use our own */
@@ -28,8 +37,8 @@
   min-height: 100px;
   color: rgba(255, 255, 255, 0.9);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.75rem; /* text-xs */
-  line-height: 1.5;
+  font-size: 0.875rem; /* text-sm */
+  line-height: 1.625; /* leading-relaxed */
 }
 
 .ProseMirror p {

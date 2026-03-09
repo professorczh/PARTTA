@@ -12,6 +12,7 @@ interface MentionEditorProps {
   initialContent: string;
   onChange: (content: string) => void;
   mentions: TapNode[];
+  currentNodeId: string;
   placeholder?: string;
   className?: string;
   onEnter?: () => void;
@@ -23,16 +24,32 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
   initialContent,
   onChange,
   mentions,
+  currentNodeId,
   placeholder,
   className,
   onEnter
 }) => {
-  const { edges, setEdges } = useTapStore();
+  const { nodes, edges, setEdges } = useTapStore();
   
   const editor = useEditor({
     extensions: [
       StarterKit.configure({}),
-      Mention.configure({
+      Mention.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            connected: {
+              default: true,
+              parseHTML: element => element.getAttribute('data-connected') !== 'false',
+              renderHTML: attributes => {
+                return {
+                  'data-connected': attributes.connected,
+                }
+              },
+            },
+          }
+        },
+      }).configure({
         HTMLAttributes: {
           class: 'mention-chip',
           onmouseenter: 'this.dispatchEvent(new CustomEvent("mention-hover", { bubbles: true, detail: { id: this.getAttribute("data-id"), label: this.getAttribute("data-label") } }))',
@@ -109,7 +126,7 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
     editorProps: {
       attributes: {
         class: cn(
-          'nodrag prose prose-sm focus:outline-none min-h-[100px] max-h-[200px] overflow-y-auto text-white/90 font-mono text-xs',
+          'nodrag focus:outline-none w-full h-full text-white/90 font-mono text-sm cursor-text',
           className
         ),
       },
@@ -124,7 +141,35 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
     },
   });
 
-  // Sync initial content if it changes externally (and editor is empty or different)
+  // Sync connected state of mentions
+  useEffect(() => {
+    if (!editor) return;
+
+    let hasChanges = false;
+    const { tr } = editor.state;
+
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'mention') {
+        const targetShortId = node.attrs.id;
+        const targetNode = nodes.find(n => n.data.shortId === targetShortId);
+        const isConnected = !!(targetNode && edges.some(e => e.source === targetNode.id && e.target === currentNodeId));
+        
+        if (node.attrs.connected !== isConnected) {
+          tr.setNodeMarkup(pos, undefined, {
+            ...node.attrs,
+            connected: isConnected,
+          });
+          hasChanges = true;
+        }
+      }
+    });
+
+    if (hasChanges) {
+      editor.view.dispatch(tr);
+    }
+  }, [edges, nodes, editor, currentNodeId]);
+
+  // Sync initial content if it changes externally
   useEffect(() => {
     if (!editor) return;
     

@@ -102,10 +102,10 @@ export const Toast = ({ message, isVisible, onClose, type = 'success' }: ToastPr
     <AnimatePresence>
       {isVisible && (
         <motion.div
-          initial={{ y: 20, opacity: 0 }}
+          initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 20, opacity: 0 }}
-          className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[3000] flex items-center gap-3 px-6 py-3 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl"
+          exit={{ y: -20, opacity: 0 }}
+          className="fixed top-8 left-1/2 -translate-x-1/2 z-[3000] flex items-center gap-3 px-6 py-3 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl"
         >
           {type === 'success' ? (
             <CheckCircle2 size={18} className="text-emerald-500" />
