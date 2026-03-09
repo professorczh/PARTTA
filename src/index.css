@@ -112,9 +112,29 @@
 
 /* Nodes Selection Box (The dashed box around multiple selected nodes) */
 .react-flow__nodesselection-rect {
-  stroke: #3b82f6 !important; /* Blue */
-  stroke-width: 2px !important;
-  stroke-dasharray: 5, 5 !important;
+  pointer-events: none !important; /* 默认不捕获，防止挡住节点 */
+  border: 1px dashed #3b82f6 !important;
+  background: rgba(59, 130, 246, 0.05) !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 仅在活跃且有尺寸时开启交互 */
+.react-flow__nodesselection-rect[style*="width"]:not([style*="width: 0px"]):not([style*="width:0px"]) {
+  pointer-events: all !important;
+  display: block !important;
+  z-index: 1000 !important;
+}
+
+/* 核心：当宽高为 0 时，强制物理消失，防止渲染成一个点，并移除交互干扰 */
+.react-flow__nodesselection-rect[style*="width: 0px"],
+.react-flow__nodesselection-rect[style*="height: 0px"],
+.react-flow__nodesselection-rect[style*="width:0px"],
+.react-flow__nodesselection-rect[style*="height:0px"] {
+  display: none !important;
+  opacity: 0 !important;
+  border: none !important;
+  pointer-events: none !important;
 }
 
 .react-flow__selection {

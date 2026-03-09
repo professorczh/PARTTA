@@ -561,11 +561,16 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     updateNodeData(node.id, { activeOutputMode: mode });
   };
 
+  const isShiftPressed = useTapStore((state) => state.isShiftPressed);
   const isTextNode = node.type === 'text-node';
-  // Only TextNode uses the "Drawer" mode (hiding behind the node)
-  // because its height is now fixed. Other nodes use "Floating" mode.
-  const isDrawerMode = isTextNode;
-  const isCollapsed = isDrawerMode && !isExpanded;
+  const isImageNode = node.type === 'image-node';
+  const isVideoNode = node.type === 'video-node';
+  
+  // All nodes now use the "Drawer" mode (hiding behind the node)
+  const isDrawerMode = isTextNode || isImageNode || isVideoNode;
+  
+  // TextNode collapses on hover-out, Image/Video nodes collapse on Shift
+  const isCollapsed = isTextNode ? !isExpanded : isShiftPressed;
 
   if (!selected) return null;
 

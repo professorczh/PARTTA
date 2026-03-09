@@ -7,6 +7,7 @@ import {
   Panel,
   BackgroundVariant,
   useReactFlow,
+  useStoreApi,
   ReactFlowProvider,
   ConnectionLineType,
   ConnectionLineComponentProps,
@@ -63,7 +64,6 @@ import { cn } from './lib/utils';
 import { TextNode } from './TextNode';
 import { ImageNode } from './ImageNode';
 import { VideoNode } from './VideoNode';
-import { ShellNode } from './ShellNode';
 import { ModelsModal } from './components/ModelsModal';
 import { 
   Plus, 
@@ -78,6 +78,7 @@ import {
   Grid,
   Type,
   ImageIcon,
+  Video,
   Box,
   ZoomIn,
   ZoomOut,
@@ -90,8 +91,6 @@ const nodeTypes = {
   'text-node': TextNode,
   'image-node': ImageNode,
   'video-node': VideoNode,
-  'generator-node': ShellNode,
-  none: ShellNode,
 };
 
 const edgeTypes = {
@@ -124,7 +123,9 @@ function Flow() {
     cloneNodes,
     pushHistory,
     interactionMode,
-    setInteractionMode
+    setInteractionMode,
+    isShiftPressed,
+    setShiftPressed
   } = useTapStore();
 
   const handleResetApp = useCallback(() => {
@@ -143,10 +144,10 @@ function Flow() {
     zoomTo,
     getViewport
   } = useReactFlow();
+  const store = useStoreApi();
   const [isModelsModalOpen, setIsModelsModalOpen] = React.useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = React.useState(false);
   const [menu, setMenu] = React.useState<{ top: number; left: number; x: number; y: number; sourceHandle?: { nodeId: string; handleId: string | null; type: string } } | null>(null);
-  const [isShiftPressed, setIsShiftPressed] = React.useState(false);
   const [isAltPressed, setIsAltPressed] = React.useState(false);
   const [isSpacePressed, setIsSpacePressed] = React.useState(false);
   const rightClickStartRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -395,7 +396,7 @@ function Flow() {
     const handleKeyDown = (e: KeyboardEvent) => { 
       const isCtrl = e.ctrlKey || e.metaKey;
       if (isCtrl) useTapStore.getState().setCtrlPressed(true);
-      if (e.key === 'Shift') setIsShiftPressed(true); 
+      if (e.key === 'Shift') setShiftPressed(true); 
       if (e.key === 'Alt') setIsAltPressed(true);
 
       // Shortcuts
@@ -444,7 +445,7 @@ function Flow() {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => { 
-      if (e.key === 'Shift') setIsShiftPressed(false); 
+      if (e.key === 'Shift') setShiftPressed(false); 
       if (e.key === 'Alt') setIsAltPressed(false);
       if (e.key === ' ') setIsSpacePressed(false);
       
@@ -455,7 +456,7 @@ function Flow() {
     };
 
     const handleBlur = () => {
-      setIsShiftPressed(false);
+      setShiftPressed(false);
       setIsAltPressed(false);
       useTapStore.getState().setCtrlPressed(false);
     };
@@ -505,7 +506,7 @@ function Flow() {
 
     setMenu(null);
     setPendingConnection(null);
-  }, [nodes.length, addNode, onConnect]);
+  }, [addNode, onConnect]);
 
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent) => {
@@ -560,7 +561,15 @@ function Flow() {
     setMenu(null);
     setPendingConnection(null);
     setIsConnecting(false);
-  }, [setMenu]);
+    
+    // Hardcore reset using store API
+    const { getState } = store;
+    getState().unselectNodesAndEdges();
+    
+    // Explicitly clear selection on pane click
+    const clearedNodes = nodes.map((node) => ({ ...node, selected: false }));
+    setNodes(clearedNodes);
+  }, [setMenu, setNodes, nodes, store]);
 
   const onConnectStart = useCallback((event: any, { nodeId, handleId, handleType }: any) => {
     // Don't start connection if Shift is pressed (user is likely trying to selection)
@@ -613,12 +622,27 @@ function Flow() {
     }
   }, [isAltPressed, nodes, cloneNodes]);
 
+  const onSelectionEnd = useCallback(() => {
+    // Hardcore reset of the selection state machine
+    const { getState } = store;
+    // In @xyflow/react (v12), some methods might have different names or availability
+    // resetSelectedElements is common in older versions, let's use what's available
+    if (typeof (getState() as any).resetSelectedElements === 'function') {
+      (getState() as any).resetSelectedElements();
+    }
+    getState().triggerNodeChanges([]); 
+    
+    // Force a state refresh
+    setNodes([...nodes]);
+  }, [setNodes, nodes, store]);
+
   const onNodeDragStop = useCallback(() => {
     // Clear isCloning flag for all nodes
-    setNodes(nodes.map(n => n.data.isCloning ? { ...n, data: { ...n.data, isCloning: false } } : n));
+    const resetNodes = nodes.map(n => n.data.isCloning ? { ...n, data: { ...n.data, isCloning: false } } : n);
+    setNodes(resetNodes);
     pushHistory();
     setIsConnecting(false);
-  }, [pushHistory, nodes, setNodes]);
+  }, [pushHistory, setNodes, nodes]);
 
   return (
     <div className="w-full h-screen bg-[var(--app-bg)] text-[var(--app-text)] font-sans overflow-hidden flex flex-col">
@@ -696,6 +720,7 @@ function Flow() {
           onConnect={onConnect}
           onConnectStart={onConnectStart}
           onConnectEnd={onConnectEnd}
+          onSelectionEnd={onSelectionEnd}
           onNodesDelete={deleteNodes}
           onNodeDragStart={onNodeDragStart}
           onNodeDragStop={onNodeDragStop}
@@ -729,15 +754,19 @@ function Flow() {
               if (parentNode) {
                 const isParentSelected = parentNode.selected;
                 
-                // If parent is not selected, select both
+                // If parent is not selected, select both, deselect others
                 if (!isParentSelected) {
+                  const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
                   onNodesChange([
+                    ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
                     { id: parentNode.id, type: 'select', selected: true },
                     { id: node.id, type: 'select', selected: true }
                   ]);
                 } else {
                   // If parent is already selected, this second click on B deselects A
+                  const otherSelected = nodes.filter(n => n.selected && n.id !== node.id && n.id !== parentNode.id);
                   onNodesChange([
+                    ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
                     { id: parentNode.id, type: 'select', selected: false },
                     { id: node.id, type: 'select', selected: true }
                   ]);
@@ -796,31 +825,32 @@ function Flow() {
             <div 
               className="fixed bg-[var(--app-panel)] border border-[var(--app-border)] rounded-xl shadow-2xl z-[100] overflow-hidden min-w-[160px] hud-border"
               style={{ top: menu.top, left: menu.left }}
+              onMouseDown={(e) => e.stopPropagation()}
             >
               <div className="p-2 border-b border-[var(--app-border)] text-[8px] uppercase tracking-widest text-[var(--app-text-muted)] font-bold">Add Node</div>
-              <button 
-                onClick={() => handleAddNode('text-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-                className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-              >
-                <Type size={14} className="text-emerald-400" />
-                <span>文字节点</span>
-              </button>
-              <button 
-                onClick={() => handleAddNode('image-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-                className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-              >
-                <ImageIcon size={14} className="text-blue-400" />
-                <span>图片节点</span>
-              </button>
-              <button 
-                onClick={() => handleAddNode('generator-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
-                className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-              >
-                <Box size={14} className="text-white/40" />
-                <span>生成器节点 (空壳)</span>
-              </button>
-            </div>
-          )}
+      <button 
+        onClick={() => handleAddNode('text-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+      >
+        <Type size={14} className="text-emerald-400" />
+        <span>文字节点</span>
+      </button>
+      <button 
+        onClick={() => handleAddNode('image-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+      >
+        <ImageIcon size={14} className="text-blue-400" />
+        <span>图片节点</span>
+      </button>
+      <button 
+        onClick={() => handleAddNode('video-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
+        className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+      >
+        <Video size={14} className="text-purple-400" />
+        <span>视频节点</span>
+      </button>
+    </div>
+  )}
 
           {/* Specialized UI Overlays */}
           <AnimatePresence>

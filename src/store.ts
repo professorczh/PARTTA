@@ -152,9 +152,11 @@ interface TapState {
   isDemoMode: boolean;
   isRecognitionMode: boolean;
   isCtrlPressed: boolean;
+  isShiftPressed: boolean;
   setDemoMode: (enabled: boolean) => void;
   setRecognitionMode: (enabled: boolean) => void;
   setCtrlPressed: (enabled: boolean) => void;
+  setShiftPressed: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
   updateProvider: (id: string, provider: Partial<ProviderConfig>) => void;
   removeProvider: (id: string) => void;
@@ -255,11 +257,16 @@ export const useTapStore = create<TapState>()(
       isDemoMode: true, // Default to true as per user's preference for easy demo
       isRecognitionMode: false,
       isCtrlPressed: false,
+      isShiftPressed: false,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
       setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
       setCtrlPressed: (enabled: boolean) => {
         if (get().isCtrlPressed === enabled) return;
         set({ isCtrlPressed: enabled });
+      },
+      setShiftPressed: (enabled: boolean) => {
+        if (get().isShiftPressed === enabled) return;
+        set({ isShiftPressed: enabled });
       },
       onNodesChange: (changes: NodeChange<TapNode>[]) => {
         set({

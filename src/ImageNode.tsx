@@ -328,15 +328,17 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       transition={{ type: 'spring', duration: 0.5, bounce: 0.4 }}
-      className={cn(
-        "w-full h-full flex flex-col glass-panel rounded-2xl relative transition-all duration-300",
+      className="relative w-full h-full group"
+    >
+      {/* Node Body */}
+      <div className={cn(
+        "w-full h-full flex flex-col glass-panel rounded-2xl relative z-10 transition-all duration-300",
         selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl shadow-red-900/20",
         data.isLoading && "animate-pulse ring-1 ring-blue-500/50",
         isCtrlPressed && "ring-2 ring-red-500/30",
         isCtrlPressed && isHovered && "ring-red-500 animate-pulse",
         data.isCloning && "border-dashed border-2 border-[var(--brand-red)]/60"
-      )}
-    >
+      )}>
       <NodeResizer 
         color="transparent" 
         isVisible={selected} 
@@ -658,6 +660,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           </motion.div>
         )}
       </div>
+    </div>
 
       {/* Ports */}
       <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[100] pointer-events-auto">

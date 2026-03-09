@@ -85,13 +85,18 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
   };
 
   return (
-    <div 
-      className={cn(
-        "w-[360px] aspect-square flex flex-col glass-panel rounded-2xl relative",
+    <motion.div 
+      initial={{ scale: 0.9, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', duration: 0.5, bounce: 0.4 }}
+      className="relative w-[360px] aspect-square group"
+    >
+      {/* Node Body */}
+      <div className={cn(
+        "w-full h-full flex flex-col glass-panel rounded-2xl relative z-10 transition-all duration-300",
         selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl",
         data.isCloning && "border-dashed border-2 border-[var(--brand-red)]/60"
-      )}
-    >
+      )}>
       {/* Header */}
       <div className="bg-[var(--app-panel)] px-4 py-2 flex items-center justify-between border-b border-[var(--app-border)] rounded-t-2xl">
         <div className="flex items-center gap-2">
@@ -134,6 +139,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
           <Video size={48} className="text-white/10" />
         </div>
       </div>
+    </div>
 
       {/* Built-in Input (Selected Only) */}
       <NodePromptInput node={props as unknown as TapNode} selected={!!selected} onRun={handleRun} />
@@ -152,6 +158,6 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
       <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
         <MagneticInput isTargetOfConnection={isTargetOfConnection} dragging={dragging} />
       </div>
-    </div>
+    </motion.div>
   );
 });
