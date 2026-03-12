@@ -161,6 +161,7 @@ interface TapState {
   isSelectionBoxEnabled: boolean; // Deprecated, but keeping for compatibility if needed
   isCtrlPressed: boolean;
   isShiftPressed: boolean;
+  isAltPressed: boolean;
   setDemoMode: (enabled: boolean) => void;
   setRecognitionMode: (enabled: boolean) => void;
   setMultiSelectMasterEnabled: (enabled: boolean) => void;
@@ -171,6 +172,7 @@ interface TapState {
   setSelectionBoxEnabled: (enabled: boolean) => void;
   setCtrlPressed: (enabled: boolean) => void;
   setShiftPressed: (enabled: boolean) => void;
+  setAltPressed: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
   updateProvider: (id: string, provider: Partial<ProviderConfig>) => void;
   removeProvider: (id: string) => void;
@@ -282,6 +284,7 @@ export const useTapStore = create<TapState>()(
       isSelectionBoxEnabled: true,
       isCtrlPressed: false,
       isShiftPressed: false,
+      isAltPressed: false,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
       setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
       setMultiSelectMasterEnabled: (enabled: boolean) => set({ isMultiSelectMasterEnabled: enabled }),
@@ -297,9 +300,29 @@ export const useTapStore = create<TapState>()(
         if (get().isShiftPressed === enabled) return;
         set({ isShiftPressed: enabled });
       },
+      setAltPressed: (enabled: boolean) => {
+        if (get().isAltPressed === enabled) return;
+        set({ isAltPressed: enabled });
+      },
       onNodesChange: (changes: NodeChange<TapNode>[]) => {
+        const currentNodes = get().nodes;
+        
+        // Redirect position changes from original nodes to their clones during Alt-drag
+        const redirectedChanges = changes.map(change => {
+          if (change.type === 'position' && change.dragging) {
+            const node = currentNodes.find(n => n.id === change.id);
+            if (node?.data?.isCloning && node.data.activeCloneId) {
+              return {
+                ...change,
+                id: node.data.activeCloneId as string
+              };
+            }
+          }
+          return change;
+        });
+
         set({
-          nodes: applyNodeChanges(changes, get().nodes),
+          nodes: applyNodeChanges(redirectedChanges, currentNodes),
         });
       },
       onEdgesChange: (changes: EdgeChange[]) => {
@@ -953,11 +976,14 @@ export const useTapStore = create<TapState>()(
           const newNode: TapNode = {
             ...JSON.parse(JSON.stringify(node)),
             id: newId,
-            selected: false,
+            selected: true, // Take over selection immediately
+            zIndex: 1001, // Ensure clone is on top
             data: {
               ...node.data,
               shortId: newShortId,
               isCloning: false,
+              isDraggedClone: true,
+              clonedFrom: node.id,
               isLoading: false,
               isLocked: false,
               history: [],
@@ -1009,7 +1035,7 @@ export const useTapStore = create<TapState>()(
           nodes: [
             ...currentNodes.map(n => 
               nodesToClone.some(ntc => ntc.id === n.id) 
-                ? { ...n, data: { ...n.data, isCloning: true } } 
+                ? { ...n, selected: false, zIndex: 1, data: { ...n.data, isCloning: true, activeCloneId: idMap[n.id] } } 
                 : n
             ),
             ...newNodes
@@ -1047,6 +1073,8 @@ export const useTapStore = create<TapState>()(
         isDemoMode: state.isDemoMode,
         isRecognitionMode: state.isRecognitionMode,
         isCtrlPressed: false, // Don't persist key state
+        isShiftPressed: false,
+        isAltPressed: false,
         skipDeleteConfirm: state.skipDeleteConfirm,
         skipOverwriteConfirm: state.skipOverwriteConfirm,
         rememberPinTargetChoice: state.rememberPinTargetChoice,

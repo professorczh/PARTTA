@@ -21,7 +21,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   
-  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode, pinTargetNodeId, addPinWithTarget } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode, pinTargetNodeId, addPinWithTarget, providers, globalDefaults, isDemoMode, addHistoryItem } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     addUploadedImage: state.addUploadedImage,
     removeUploadedImage: state.removeUploadedImage,
@@ -39,7 +39,11 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     nodes: state.nodes,
     isRecognitionMode: state.isRecognitionMode,
     pinTargetNodeId: state.pinTargetNodeId,
-    addPinWithTarget: state.addPinWithTarget
+    addPinWithTarget: state.addPinWithTarget,
+    providers: state.providers,
+    globalDefaults: state.globalDefaults,
+    isDemoMode: state.isDemoMode,
+    addHistoryItem: state.addHistoryItem
   })));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -287,12 +291,80 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     e.target.value = '';
   };
 
+  const handleRun = async () => {
+    const activeOutputMode = data.activeOutputMode || 'image';
+    const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
+    
+    let currentModel = null;
+    if (modelKey) {
+      const [pId, mId] = modelKey.split(':');
+      const p = providers.find(p => p.id === pId);
+      const m = p?.models.find(m => m.id === mId);
+      if (p && m && p.enabled && m.enabled) currentModel = { provider: p, model: m };
+    }
+
+    if (!currentModel) {
+      alert("No model selected.");
+      return;
+    }
+
+    updateNodeData(id, { isLoading: true });
+
+    try {
+      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt || '', nodes, edges, id);
+      
+      const response = await aiService.generate({
+        prompt: resolvedPrompt,
+        images,
+        modelId: currentModel.model.id,
+        provider: currentModel.provider,
+        isDemoMode,
+        aspectRatio: data.config?.aspectRatio,
+        thinkingLevel: data.config?.thinkingLevel === 'off' ? undefined : data.config?.thinkingLevel,
+        thoughtSignature: data.thoughtSignature
+      });
+
+      if (response.error) {
+        alert(`Error: ${response.error}`);
+        updateNodeData(id, { isLoading: false });
+        return;
+      }
+
+      const newOutputs = { ...(data.outputs || {}) };
+      const newVersions = { ...(data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 }) };
+      
+      if (response.imageUrl) {
+        newOutputs.image = response.imageUrl;
+        newVersions.image++;
+        
+        addHistoryItem(id, {
+          id: `hist-${Date.now()}`,
+          url: response.imageUrl,
+          prompt: data.prompt || '',
+          config: { ...data.config },
+          timestamp: Date.now(),
+          thoughtSignature: response.thoughtSignature
+        });
+      }
+
+      updateNodeData(id, { 
+        isLoading: false, 
+        outputs: newOutputs,
+        outputVersions: newVersions,
+        thoughtSignature: response.thoughtSignature
+      });
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+      updateNodeData(id, { isLoading: false });
+    }
+  };
+
   const hasPins = (data.pins?.length || 0) > 0;
   const isTargetForPin = nodes.some(n => n.id !== id && n.selected && isCtrlPressed);
 
   return (
     <motion.div 
-      initial={{ scale: 0.9, opacity: 0 }}
+      initial={data.isDraggedClone ? false : { scale: 0.9, opacity: 0 }}
       animate={{ 
         scale: 1, 
         opacity: 1
@@ -666,7 +738,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     </div>
 
       {/* Floating Control Panel */}
-      <NodePromptInput node={props as any} selected={selected} isPinned={hasPins} />
+      <NodePromptInput node={props as any} selected={selected} isPinned={hasPins} onRun={handleRun} />
 
       {/* Ports */}
       <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">

@@ -110,14 +110,24 @@
   scrollbar-width: none;
 }
 
-.mode-pan .react-flow__pane,
-.mode-pan .react-flow__node {
+/* Hybrid Hand Mode Logic */
+.mode-pan .react-flow__pane {
   cursor: grab !important;
 }
-.mode-pan .react-flow__pane:active,
-.mode-pan .react-flow__node:active {
+.mode-pan .react-flow__pane:active {
   cursor: grabbing !important;
 }
+.mode-pan .react-flow__node {
+  cursor: default !important;
+}
+.mode-pan .react-flow__node.selected {
+  cursor: grab !important;
+}
+.mode-pan .react-flow__node.dragging {
+  cursor: grabbing !important;
+}
+
+/* Selection Mode Cursors */
 .mode-selection .react-flow__pane {
   cursor: default !important;
 }
@@ -130,12 +140,27 @@
 .mode-selection .react-flow__node.dragging {
   cursor: grabbing !important;
 }
+
+/* Absolute Pan (Space Pressed) - Force Hand everywhere and disable node interaction */
+.space-pressed .react-flow__pane {
+  cursor: grab !important;
+}
+.space-pressed .react-flow__pane:active {
+  cursor: grabbing !important;
+}
+.space-pressed .react-flow__node {
+  cursor: grab !important;
+  pointer-events: none !important;
+}
+
 .mode-recognition .react-flow__pane {
   cursor: crosshair !important;
 }
 
-.shift-pressed .react-flow__node {
+.shift-pressed .react-flow__node,
+.connection-active .react-flow__node {
   cursor: default !important;
+  pointer-events: none !important;
 }
 
 /* Nodes Selection Box (The dashed box around multiple selected nodes) */

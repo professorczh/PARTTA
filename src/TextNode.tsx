@@ -6,6 +6,7 @@ import { Type, Eye, Edit3, Terminal, Check, X, Loader2 } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
 import { EditableTitle } from './components/EditableTitle';
 import { resolvePrompt } from './utils/promptResolver';
+import { aiService } from './services/aiService';
 import { MentionEditor } from './components/MentionEditor';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -24,13 +25,16 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   const [isPromptActive, setIsPromptActive] = useState(false);
   
-  const { updateNodeData, nodes, onConnect, edges, setEdges, skipDeleteConfirm } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, nodes, onConnect, edges, setEdges, skipDeleteConfirm, providers, globalDefaults, isDemoMode } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     nodes: state.nodes,
     onConnect: state.onConnect,
     edges: state.edges,
     setEdges: state.setEdges,
-    skipDeleteConfirm: state.skipDeleteConfirm
+    skipDeleteConfirm: state.skipDeleteConfirm,
+    providers: state.providers,
+    globalDefaults: state.globalDefaults,
+    isDemoMode: state.isDemoMode
   })));
 
   const viewMode = data.viewMode || 'edit';
@@ -142,9 +146,66 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
     }
   };
 
+  const handleRun = async () => {
+    const activeOutputMode = data.activeOutputMode || 'text';
+    const modelKey = data.config?.model || (globalDefaults[activeOutputMode as keyof typeof globalDefaults] as string);
+    
+    let currentModel = null;
+    if (modelKey) {
+      const [pId, mId] = modelKey.split(':');
+      const p = providers.find(p => p.id === pId);
+      const m = p?.models.find(m => m.id === mId);
+      if (p && m && p.enabled && m.enabled) currentModel = { provider: p, model: m };
+    }
+
+    if (!currentModel) {
+      alert("No model selected.");
+      return;
+    }
+
+    updateNodeData(id, { isLoading: true });
+
+    try {
+      const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt || '', nodes, edges, id);
+      
+      const response = await aiService.generate({
+        prompt: resolvedPrompt,
+        images,
+        modelId: currentModel.model.id,
+        provider: currentModel.provider,
+        isDemoMode,
+        thinkingLevel: data.config?.thinkingLevel === 'off' ? undefined : data.config?.thinkingLevel,
+        thoughtSignature: data.thoughtSignature
+      });
+
+      if (response.error) {
+        alert(`Error: ${response.error}`);
+        updateNodeData(id, { isLoading: false });
+        return;
+      }
+
+      const newOutputs = { ...(data.outputs || {}) };
+      const newVersions = { ...(data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 }) };
+      
+      newOutputs.text = response.text;
+      newVersions.text++;
+
+      updateNodeData(id, { 
+        isLoading: false, 
+        isGenerated: true,
+        outputs: newOutputs,
+        outputVersions: newVersions,
+        thoughtSignature: response.thoughtSignature
+      });
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+      updateNodeData(id, { isLoading: false });
+    }
+  };
+
   return (
     <motion.div 
-      initial={{ scale: 0.9, opacity: 0 }}
+      initial={data.isDraggedClone ? false : { scale: 0.9, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', duration: 0.5, bounce: 0.4 }}
       className="relative w-[360px] group"
@@ -342,6 +403,7 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         node={props as any} 
         selected={selected} 
         onExpandChange={setIsPromptActive}
+        onRun={handleRun}
       />
 
       {/* Ports */}

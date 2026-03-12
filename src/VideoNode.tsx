@@ -86,7 +86,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
 
   return (
     <motion.div 
-      initial={{ scale: 0.9, opacity: 0 }}
+      initial={data.isDraggedClone ? false : { scale: 0.9, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', duration: 0.5, bounce: 0.4 }}
       className="relative w-[360px] aspect-square group"

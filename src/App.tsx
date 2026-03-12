@@ -86,6 +86,7 @@ import {
 } from 'lucide-react';
 
 import { PinEdge } from './components/PinEdge';
+import { MobileModifierPanel } from './components/MobileModifierPanel';
 
 const nodeTypes = {
   'text-node': TextNode,
@@ -444,7 +445,8 @@ function Flow() {
         e.preventDefault();
         if (e.repeat) return;
 
-        if (interactionMode === 'pan') {
+        const currentMode = useTapStore.getState().interactionMode;
+        if (currentMode === 'pan') {
           // If in Hand mode, tapping Space switches to Arrow mode permanently
           setInteractionMode('selection');
           setIsSpacePressed(false);
@@ -456,7 +458,8 @@ function Flow() {
 
       if (isCtrl && !isInput) {
         // Block Ctrl+A if multi-select master is disabled
-        if ((e.key === 'a' || e.key === 'A') && !isMultiSelectMasterEnabled) {
+        const isMultiSelectEnabled = useTapStore.getState().isMultiSelectMasterEnabled;
+        if ((e.key === 'a' || e.key === 'A') && !isMultiSelectEnabled) {
           e.preventDefault();
           return;
         }
@@ -695,8 +698,16 @@ function Flow() {
   }, [setNodes, nodes, store]);
 
   const onNodeDragStop = useCallback(() => {
-    // Clear isCloning flag for all nodes
-    const resetNodes = nodes.map(n => n.data.isCloning ? { ...n, data: { ...n.data, isCloning: false } } : n);
+    // Clear isCloning flag and swap selection if needed
+    const resetNodes = nodes.map(n => {
+      if (n.data.isCloning) {
+        return { ...n, selected: false, zIndex: undefined, data: { ...n.data, isCloning: false, activeCloneId: undefined } };
+      }
+      if (n.data.isDraggedClone) {
+        return { ...n, selected: true, zIndex: undefined, data: { ...n.data, isDraggedClone: false, clonedFrom: undefined } };
+      }
+      return n;
+    });
     setNodes(resetNodes);
     pushHistory();
     setIsConnecting(false);
@@ -714,7 +725,7 @@ function Flow() {
       </style>
 
       {/* Top Navigation Bar */}
-      <header className="h-14 border-b border-[var(--app-border)] glass-panel flex items-center justify-between px-6 z-50">
+      <header className="h-14 border-b border-[var(--app-border)] glass-panel flex items-center justify-between px-4 sm:px-6 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-[var(--brand-red)] rounded-lg flex items-center justify-center hud-border">
@@ -723,7 +734,7 @@ function Flow() {
             <span className="font-display text-xl font-bold tracking-tighter uppercase italic">PARTTA</span>
           </div>
           
-          <nav className="hidden md:flex items-center gap-1 bg-[var(--app-bg)] p-1 rounded-lg border border-[var(--app-border)]">
+          <nav className="hidden sm:flex items-center gap-1 bg-[var(--app-bg)] p-1 rounded-lg border border-[var(--app-border)]">
             <button className="px-3 py-1.5 rounded-md bg-[var(--app-border)] text-xs font-medium flex items-center gap-2">
               <Layers size={14} /> Canvas
             </button>
@@ -775,11 +786,12 @@ function Flow() {
       {/* Main Canvas Area */}
       <main 
         ref={containerRef}
-        className={cn("flex-1 relative", isShiftPressed && "shift-pressed", isConnecting && "connection-active")}
+        className={cn("flex-1 relative", isShiftPressed && "shift-pressed", isConnecting && "connection-active", isSpacePressed && "space-pressed")}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
+        <MobileModifierPanel />
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -811,9 +823,9 @@ function Flow() {
           zoomOnPinch={false}
           preventScrolling={true}
           selectionMode={SelectionMode.Partial}
-          nodesDraggable={interactionMode === 'selection' && !isSpacePressed}
+          nodesDraggable={!isSpacePressed}
           nodesConnectable={interactionMode === 'selection' && !isSpacePressed}
-          elementsSelectable={interactionMode === 'selection' && !isSpacePressed}
+          elementsSelectable={!isSpacePressed}
           className={cn(
             interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
             isRecognitionMode && "mode-recognition"
