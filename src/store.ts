@@ -54,6 +54,7 @@ export interface Pin {
   y: number; // 0 to 1
   label?: string;
   isRecognizing?: boolean;
+  isVirtual?: boolean;
 }
 
 export interface UploadedImage {
@@ -151,10 +152,23 @@ interface TapState {
   };
   isDemoMode: boolean;
   isRecognitionMode: boolean;
+  // Multi-selection settings
+  isMultiSelectMasterEnabled: boolean;
+  isBoxSelectionEnabled: boolean;
+  isShiftClickSelectionEnabled: boolean;
+  isSelectionHelperVisible: boolean;
+  
+  isSelectionBoxEnabled: boolean; // Deprecated, but keeping for compatibility if needed
   isCtrlPressed: boolean;
   isShiftPressed: boolean;
   setDemoMode: (enabled: boolean) => void;
   setRecognitionMode: (enabled: boolean) => void;
+  setMultiSelectMasterEnabled: (enabled: boolean) => void;
+  setBoxSelectionEnabled: (enabled: boolean) => void;
+  setShiftClickSelectionEnabled: (enabled: boolean) => void;
+  setSelectionHelperVisible: (visible: boolean) => void;
+  
+  setSelectionBoxEnabled: (enabled: boolean) => void;
   setCtrlPressed: (enabled: boolean) => void;
   setShiftPressed: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
@@ -173,6 +187,11 @@ interface TapState {
   setLastPinTargetId: (id: string | null) => void;
   skipOverwriteConfirm: boolean;
   setSkipOverwriteConfirm: (skip: boolean) => void;
+  // Pin Targeting
+  pinTargetNodeId: string | null;
+  setPinTargetNodeId: (id: string | null) => void;
+  addPinWithTarget: (sourceNodeId: string, pin: Pin, targetNodeId: string) => void;
+  createLinkedNode: (sourceNodeId: string, pin: Pin, pinLabel: number, position: { x: number, y: number }) => void;
   // Undo/Redo
   undo: () => void;
   redo: () => void;
@@ -228,7 +247,7 @@ export const useTapStore = create<TapState>()(
         },
       ],
       edges: [],
-      interactionMode: 'pan',
+      interactionMode: 'selection',
       setInteractionMode: (mode) => set({ interactionMode: mode }),
       providers: [
         {
@@ -256,10 +275,20 @@ export const useTapStore = create<TapState>()(
       },
       isDemoMode: true, // Default to true as per user's preference for easy demo
       isRecognitionMode: false,
+      isMultiSelectMasterEnabled: true,
+      isBoxSelectionEnabled: true,
+      isShiftClickSelectionEnabled: true,
+      isSelectionHelperVisible: true,
+      isSelectionBoxEnabled: true,
       isCtrlPressed: false,
       isShiftPressed: false,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
       setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
+      setMultiSelectMasterEnabled: (enabled: boolean) => set({ isMultiSelectMasterEnabled: enabled }),
+      setBoxSelectionEnabled: (enabled: boolean) => set({ isBoxSelectionEnabled: enabled }),
+      setShiftClickSelectionEnabled: (enabled: boolean) => set({ isShiftClickSelectionEnabled: enabled }),
+      setSelectionHelperVisible: (visible: boolean) => set({ isSelectionHelperVisible: visible }),
+      setSelectionBoxEnabled: (enabled: boolean) => set({ isSelectionBoxEnabled: enabled, isBoxSelectionEnabled: enabled }),
       setCtrlPressed: (enabled: boolean) => {
         if (get().isCtrlPressed === enabled) return;
         set({ isCtrlPressed: enabled });
@@ -413,6 +442,9 @@ export const useTapStore = create<TapState>()(
               : node
           ),
         });
+
+        // If it's a virtual pin, we don't trigger recognition yet
+        if (pin.isVirtual) return;
 
         // If recognition mode is on, trigger recognition
         if (isRecognitionMode) {
@@ -589,6 +621,151 @@ export const useTapStore = create<TapState>()(
       },
       skipOverwriteConfirm: false,
       setSkipOverwriteConfirm: (skip) => set({ skipOverwriteConfirm: skip }),
+      
+      pinTargetNodeId: null,
+      setPinTargetNodeId: (id) => set({ pinTargetNodeId: id }),
+
+      addPinWithTarget: (sourceNodeId, pin, targetNodeId) => {
+        const state = get();
+        const nodes = state.nodes;
+        const sourceNode = nodes.find(n => n.id === sourceNodeId);
+        const targetNode = nodes.find(n => n.id === targetNodeId);
+
+        if (!sourceNode || !targetNode) return;
+
+        pushHistory();
+
+        const pinLabel = (sourceNode.data.pins?.length || 0) + 1;
+        const mentionText = `[@ Pin_${pinLabel} (${sourceNode.data.shortId})]`;
+
+        // 1. Update Source Node (Add Pin)
+        const updatedNodes = nodes.map(node => {
+          if (node.id === sourceNodeId) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                pins: [...(node.data.pins || []), { ...pin, label: pin.label || `Pin ${pinLabel}` }]
+              }
+            };
+          }
+          if (node.id === targetNodeId) {
+            // 2. Update Target Node (Add Mention)
+            // Smart Substitution: Remove parent image mention if it exists
+            const parentMentionRegex = new RegExp(`\\[@ IMG_[^\\]]*? \\(${sourceNode.data.shortId}\\)\\]`, 'g');
+            let newPrompt = (node.data.prompt || '').replace(parentMentionRegex, '').trim();
+            
+            newPrompt = newPrompt 
+              ? `${newPrompt} ${mentionText}` 
+              : mentionText;
+
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                prompt: newPrompt,
+                outputVersions: {
+                  ...node.data.outputVersions,
+                  prompt: (node.data.outputVersions?.prompt || 0) + 1
+                },
+                outputs: {
+                  ...node.data.outputs,
+                  prompt: newPrompt
+                }
+              }
+            };
+          }
+          return node;
+        });
+
+        set({ nodes: updatedNodes });
+
+        // 3. Create Connection
+        state.onConnect({
+          source: sourceNodeId,
+          target: targetNodeId,
+          sourceHandle: 'output-image',
+          targetHandle: 'input-main',
+          data: { pinId: pin.id }
+        } as any);
+      },
+
+      createLinkedNode: (sourceNodeId, pin, pinLabel, position) => {
+        const state = get();
+        const nodes = state.nodes;
+        const sourceNode = nodes.find(n => n.id === sourceNodeId);
+        if (!sourceNode) return;
+
+        pushHistory();
+
+        // 1. Solidify the pin on source node
+        const updatedSourceNodes = nodes.map(node => {
+          if (node.id === sourceNodeId) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                pins: (node.data.pins || []).map(p => p.id === pin.id ? { ...p, isVirtual: false, label: p.label || `Pin ${pinLabel}` } : p)
+              }
+            };
+          }
+          return node;
+        });
+
+        // 2. Create the new node
+        const newNodeId = `node-${Date.now()}`;
+        const type = 'image-node';
+        const prefix = 'IMG';
+        
+        const existingNumbers = updatedSourceNodes
+          .map(n => {
+            const sId = n.data.shortId || '';
+            if (sId.startsWith(`${prefix}_`)) {
+              const num = parseInt(sId.split('_')[1]);
+              return isNaN(num) ? 0 : num;
+            }
+            return 0;
+          });
+        
+        const maxNum = Math.max(0, ...existingNumbers);
+        const shortId = `${prefix}_${maxNum + 1}`;
+        const mentionText = `[@ Pin_${pinLabel} (${sourceNode.data.shortId})]`;
+
+        const newNode: TapNode = {
+          id: newNodeId,
+          type: 'image-node',
+          position,
+          selected: true,
+          style: { width: 360, height: 400 },
+          data: {
+            type: 'image',
+            label: `Image`,
+            shortId,
+            prompt: mentionText,
+            outputs: {
+              prompt: mentionText
+            },
+            outputVersions: { text: 0, image: 0, video: 0, prompt: 1 },
+            activeOutputMode: 'image',
+            config: {}
+          }
+        };
+
+        // 3. Update state: Unselect others, add new node, update source node
+        set({
+          nodes: [...updatedSourceNodes.map(n => ({ ...n, selected: false })), newNode],
+          pinTargetNodeId: newNodeId // Update target for continuous flow
+        });
+
+        // 4. Create connection
+        state.onConnect({
+          source: sourceNodeId,
+          target: newNodeId,
+          sourceHandle: 'output-image',
+          targetHandle: 'input-main',
+          data: { pinId: pin.id }
+        } as any);
+      },
 
       undo: () => {
         if (undoStack.length === 0) return;

@@ -145,7 +145,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
       <NodePromptInput node={props as unknown as TapNode} selected={!!selected} onRun={handleRun} />
 
       {/* Ports */}
-      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
+      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticPort 
           type="video" 
           id="output-video" 
@@ -155,7 +155,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
         />
       </div>
       
-      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
+      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticInput isTargetOfConnection={isTargetOfConnection} dragging={dragging} />
       </div>
     </motion.div>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Zap, Info, ShieldCheck, Monitor, BrainCircuit } from 'lucide-react';
+import { X, Cpu, Zap, Info, ShieldCheck, Monitor, BrainCircuit, MousePointer2 } from 'lucide-react';
 import { useTapStore } from '../store';
 import { cn } from '../lib/utils';
 
@@ -14,7 +14,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     isDemoMode, 
     setDemoMode, 
     isRecognitionMode, 
-    setRecognitionMode 
+    setRecognitionMode,
+    isMultiSelectMasterEnabled,
+    setMultiSelectMasterEnabled,
+    isBoxSelectionEnabled,
+    setBoxSelectionEnabled,
+    isShiftClickSelectionEnabled,
+    setShiftClickSelectionEnabled,
+    isSelectionHelperVisible,
+    setSelectionHelperVisible
   } = useTapStore();
 
   return (
@@ -33,10 +41,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="relative w-full max-w-md bg-[var(--app-panel)] border border-[var(--app-border)] rounded-2xl shadow-2xl overflow-hidden hud-border"
+            className="relative w-full max-w-md bg-[var(--app-panel)] border border-[var(--app-border)] rounded-2xl shadow-2xl overflow-hidden hud-border max-h-[90vh] flex flex-col"
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--app-border)] bg-white/5">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--app-border)] bg-white/5 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
                   <Cpu size={18} className="text-white/60" />
@@ -52,7 +60,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 overflow-y-auto">
               {/* AI Capabilities Section */}
               <section className="space-y-4">
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
@@ -93,6 +101,115 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                           isRecognitionMode ? "bg-emerald-400" : "bg-white/20"
                         )}
                       />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Selection Controls Section */}
+              <section className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
+                  <MousePointer2 size={12} />
+                  <span>Selection Controls (Advanced)</span>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Master Switch */}
+                  <div 
+                    onClick={() => setMultiSelectMasterEnabled(!isMultiSelectMasterEnabled)}
+                    className={cn(
+                      "group p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between",
+                      isMultiSelectMasterEnabled 
+                        ? "bg-red-500/10 border-red-500/30" 
+                        : "bg-white/5 border-white/10 hover:border-white/20"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                        isMultiSelectMasterEnabled ? "bg-red-500/20 text-red-400" : "bg-white/5 text-white/40"
+                      )}>
+                        <ShieldCheck size={20} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold">Multi-Select Master</div>
+                        <div className="text-[10px] text-[var(--app-text-muted)]">Global toggle for all multi-selection features.</div>
+                      </div>
+                    </div>
+                    <div className={cn(
+                      "w-10 h-5 rounded-full relative transition-all duration-300 border",
+                      isMultiSelectMasterEnabled ? "bg-red-500/20 border-red-500/50" : "bg-white/5 border-white/10"
+                    )}>
+                      <motion.div 
+                        animate={{ x: isMultiSelectMasterEnabled ? 20 : 2 }}
+                        className={cn(
+                          "absolute top-1 w-3 h-3 rounded-full shadow-sm",
+                          isMultiSelectMasterEnabled ? "bg-red-400" : "bg-white/20"
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Sub-switches */}
+                  <div className={cn("space-y-2 pl-4 border-l-2 border-white/5 transition-opacity", !isMultiSelectMasterEnabled && "opacity-40 pointer-events-none")}>
+                    {/* Box Selection */}
+                    <div 
+                      onClick={() => setBoxSelectionEnabled(!isBoxSelectionEnabled)}
+                      className={cn(
+                        "p-3 rounded-lg border transition-all cursor-pointer flex items-center justify-between",
+                        isBoxSelectionEnabled ? "bg-white/10 border-white/20" : "bg-white/5 border-white/5"
+                      )}
+                    >
+                      <div className="text-xs font-medium">Box Selection (Drag/Shift+Drag)</div>
+                      <div className={cn(
+                        "w-8 h-4 rounded-full relative transition-all border",
+                        isBoxSelectionEnabled ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10"
+                      )}>
+                        <motion.div 
+                          animate={{ x: isBoxSelectionEnabled ? 16 : 2 }}
+                          className="absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white/60"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Shift-Click */}
+                    <div 
+                      onClick={() => setShiftClickSelectionEnabled(!isShiftClickSelectionEnabled)}
+                      className={cn(
+                        "p-3 rounded-lg border transition-all cursor-pointer flex items-center justify-between",
+                        isShiftClickSelectionEnabled ? "bg-white/10 border-white/20" : "bg-white/5 border-white/5"
+                      )}
+                    >
+                      <div className="text-xs font-medium">Shift-Click Multi-Select</div>
+                      <div className={cn(
+                        "w-8 h-4 rounded-full relative transition-all border",
+                        isShiftClickSelectionEnabled ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10"
+                      )}>
+                        <motion.div 
+                          animate={{ x: isShiftClickSelectionEnabled ? 16 : 2 }}
+                          className="absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white/60"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Helper Box */}
+                    <div 
+                      onClick={() => setSelectionHelperVisible(!isSelectionHelperVisible)}
+                      className={cn(
+                        "p-3 rounded-lg border transition-all cursor-pointer flex items-center justify-between",
+                        isSelectionHelperVisible ? "bg-white/10 border-white/20" : "bg-white/5 border-white/5"
+                      )}
+                    >
+                      <div className="text-xs font-medium">Selection Helper Box (UI)</div>
+                      <div className={cn(
+                        "w-8 h-4 rounded-full relative transition-all border",
+                        isSelectionHelperVisible ? "bg-white/20 border-white/30" : "bg-white/5 border-white/10"
+                      )}>
+                        <motion.div 
+                          animate={{ x: isSelectionHelperVisible ? 16 : 2 }}
+                          className="absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white/60"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

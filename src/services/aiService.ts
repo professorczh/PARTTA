@@ -47,11 +47,14 @@ export const aiService = {
     if (!provider.apiKey) return false;
     
     // Try to call a simple completion to test the key
-    const testModel = provider.models[0]?.id;
-    if (!testModel) return false;
+    let testModel = provider.models[0]?.id;
+    const protocol = provider.defaultProtocol || (provider.type === 'gemini' ? 'gemini' : 'openai-compatible');
 
-    const modelConfig = provider.models[0];
-    const protocol = modelConfig?.protocol || provider.defaultProtocol || (provider.type === 'gemini' ? 'gemini' : 'openai-compatible');
+    // If no models defined, use a default one for testing based on protocol
+    if (!testModel) {
+      if (protocol === 'gemini') testModel = 'gemini-1.5-flash';
+      else testModel = 'gpt-3.5-turbo';
+    }
 
     try {
       if (protocol === 'gemini') {
@@ -214,22 +217,23 @@ export const aiService = {
     }
 
     try {
-      const response = await fetch(targetUrl, {
+      const response = await fetch('/api/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify({
+          targetUrl,
+          method: 'POST',
+          body: body
+        })
       });
 
-      const contentType = response.headers.get("content-type");
-      
-      let data: any;
       const responseText = await response.text();
+      let data: any;
       
       try {
         data = JSON.parse(responseText);
       } catch (e) {
         console.error("Failed to parse JSON response:", responseText.substring(0, 200));
-        // If it starts with { it might be a partial or malformed JSON, but let's try to be helpful
         if (responseText.trim().startsWith('{')) {
           return { error: `Malformed JSON response: ${responseText.substring(0, 100)}` };
         }
@@ -290,16 +294,21 @@ export const aiService = {
     ];
 
     try {
-      const response = await fetch(targetUrl, {
+      const response = await fetch('/api/proxy', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: modelId,
-          messages,
-          max_tokens: 1000
+          targetUrl,
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${provider.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: {
+            model: modelId,
+            messages,
+            max_tokens: 1000
+          }
         })
       });
 

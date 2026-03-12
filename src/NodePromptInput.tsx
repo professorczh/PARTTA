@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTapStore, TapNode, ProviderConfig, ModelConfig, HistoryItem } from './store';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Settings2, Image as ImageIcon, Type, ChevronUp, Check, Hash, Play, Video, X, Eye, Edit3, Terminal, Loader2, Lock } from 'lucide-react';
+import { Send, Settings2, Image as ImageIcon, Type, ChevronUp, Check, Hash, Play, Video, X, Eye, Edit3, Terminal, Loader2, Lock, Square } from 'lucide-react';
 import { ConfirmModal } from './components/ConfirmModal';
 import { MentionEditor } from './components/MentionEditor';
 import { cn } from './lib/utils';
@@ -23,23 +23,24 @@ interface NodePromptInputProps {
 type ViewMode = 'edit' | 'prev' | 'raw';
 
 const RATIOS = [
-  { label: '1:1', value: '1:1' },
-  { label: '9:16', value: '9:16' },
-  { label: '16:9', value: '16:9' },
-  { label: '3:4', value: '3:4' },
-  { label: '4:3', value: '4:3' },
-  { label: '3:2', value: '3:2' },
-  { label: '2:3', value: '2:3' },
   { label: '5:4', value: '5:4' },
   { label: '4:5', value: '4:5' },
   { label: '21:9', value: '21:9' },
+  { label: '4:3', value: '4:3' },
+  { label: '3:4', value: '3:4' },
+  { label: '3:2', value: '3:2' },
+  { label: '2:3', value: '2:3' },
+  { label: 'Auto', value: 'auto' },
+  { label: '1:1', value: '1:1' },
+  { label: '16:9', value: '16:9' },
+  { label: '9:16', value: '9:16' },
 ];
 
 const SIZES = [
-  { label: '512P', value: '512px' },
-  { label: '1K', value: '1K' },
-  { label: '2K', value: '2K' },
   { label: '4K', value: '4K' },
+  { label: '2K', value: '2K' },
+  { label: '1K', value: '1K' },
+  { label: '512P', value: '512px' },
 ];
 
 export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChange }: NodePromptInputProps) => {
@@ -61,8 +62,9 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   const skipOverwriteConfirm = useTapStore((state) => state.skipOverwriteConfirm);
   const setSkipOverwriteConfirm = useTapStore((state) => state.setSkipOverwriteConfirm);
 
-  const { screenToFlowPosition, flowToScreenPosition, getNodes, getEdges } = useReactFlow();
+  const { screenToFlowPosition, flowToScreenPosition, getNodes, getEdges, updateNode } = useReactFlow();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showOverwriteModal, setShowOverwriteModal] = useState(false);
@@ -112,6 +114,31 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   }, [prompt, nodes]);
 
   const [activeDropdown, setActiveDropdown] = useState<'model' | 'mention' | 'settings' | 'thinking' | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dropdown-container') && !target.closest('.dropdown-trigger')) {
+        setActiveDropdown(null);
+      }
+    };
+
+    if (activeDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [activeDropdown]);
+
+  // Boost node zIndex when dropdown is active to stay on top of other nodes
+  useEffect(() => {
+    if (activeDropdown) {
+      updateNode(node.id, { zIndex: 1000 });
+    } else {
+      updateNode(node.id, { zIndex: undefined });
+    }
+  }, [activeDropdown, node.id, updateNode]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
 
@@ -251,6 +278,18 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
     });
   };
 
+  const handleScopedSelectAll = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      e.preventDefault();
+      e.stopPropagation();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(e.currentTarget);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+  };
+
   const handleConfirmDelete = () => {
     if (pendingDeletion) {
       setEdges(edges.filter(e => !(e.source === pendingDeletion.nodeId && e.target === node.id)));
@@ -291,6 +330,12 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
         }
       }
     }
+  };
+
+  const handleStop = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsGenerating(false);
+    updateNodeData(node.id, { isLoading: false });
   };
 
   const handleGenerateText = async () => {
@@ -569,425 +614,573 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   // All nodes now use the "Drawer" mode (hiding behind the node)
   const isDrawerMode = isTextNode || isImageNode || isVideoNode;
   
-  // TextNode collapses on hover-out, Image/Video nodes collapse on Shift
-  const isCollapsed = isTextNode ? !isExpanded : isShiftPressed;
+  // TextNode collapses on hover-out, Image/Video nodes collapse on Shift (but not if focused)
+  const isCollapsed = isTextNode ? !isExpanded : (isShiftPressed && !isFocused);
 
   if (!selected) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
-      animate={{ 
-        opacity: 1, 
-        y: isDrawerMode 
-          ? (isCollapsed ? -284 : (isPinned ? -15 : 0))
-          : (isPinned ? -15 : 0),
-        zIndex: isDrawerMode ? 0 : 110 // Always stay behind the body (z-10) in drawer mode, but above ports (z-100) in floating mode
-      }}
-      transition={{ type: 'spring', stiffness: 300, damping: 30, mass: 0.8 }}
-      onMouseEnter={() => setExpanded(true)}
-      exit={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
-      className={cn(
-        "absolute left-0 w-full pointer-events-auto transition-all duration-300",
-        (isCollapsed || isPinned) ? "top-full" : "top-[calc(100%+8px)]"
-      )}
-    >
-      <div className={cn(
-        "bg-[var(--app-panel)] border border-white/20 rounded-2xl shadow-2xl backdrop-blur-xl transition-all duration-300 relative flex flex-col",
-        isDrawerMode ? "h-[320px]" : "h-[320px]", // Force consistent height for all modes
-        isCollapsed ? "blur-[1px] opacity-60 border-white/10 cursor-pointer" : (isPinned ? "h-[75px] border-white/10" : "")
-      )}>
-        {/* The Drawer Content Wrapper */}
+    <>
+      {/* Layer 1: The Drawer (Behind Node Body) */}
+      <motion.div
+        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        animate={{ 
+          opacity: 1, 
+          y: isDrawerMode 
+            ? (isCollapsed ? -284 : (isPinned ? -15 : 0))
+            : (isPinned ? -15 : 0),
+          zIndex: 0 // Always behind node body (z-10)
+        }}
+        transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 1 }}
+        onMouseEnter={() => setExpanded(true)}
+        exit={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        className={cn(
+          "absolute left-0 w-full pointer-events-auto",
+          (isCollapsed || isPinned) ? "top-full" : "top-[calc(100%+8px)]"
+        )}
+      >
         <div className={cn(
-          "transition-all duration-300 h-full flex flex-col p-4 pb-4",
-          isCollapsed ? "opacity-0 pointer-events-none" : (isPinned ? "opacity-60 blur-[1.2px] pointer-events-none justify-end" : "opacity-100 blur-0")
+          "bg-[var(--app-panel)] border border-white/20 rounded-2xl shadow-2xl backdrop-blur-xl transition-all duration-300 relative flex flex-col",
+          isDrawerMode ? "h-[320px]" : "h-[320px]", // Force consistent height for all modes
+          isCollapsed ? "blur-[1px] opacity-60 border-white/10 cursor-pointer overflow-hidden" : (isPinned ? "h-[75px] border-white/10 overflow-hidden" : "overflow-visible")
         )}>
-          {/* Layer 1: Image Thumbnails & Mentions (Flex Wrap) */}
-        {(referencedNodes.length > 0 || (node.data.pins && node.data.pins.length > 0)) && (
-          <>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {/* Local PINs (Source Node Scope) */}
-              {node.data.pins && node.data.pins.length > 0 && (
-                <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-xl p-1.5 pr-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                    <Hash size={14} />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {node.data.pins.map((pin, idx) => (
-                      <div key={pin.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10">
-                        <span className="text-[9px] font-bold text-white/40">({idx + 1})</span>
-                        <span className="text-[9px] font-medium text-white/80 max-w-[60px] truncate">
-                          {pin.label || 'Pin'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Referenced Nodes (Target Node Scope) */}
-              {referencedNodes.map(refNode => {
-                const imageUrl = refNode.data.outputs?.image || refNode.data.uploadedImages?.[0]?.url;
-                const hasImage = !!imageUrl;
-                const nodePins = refNode.data.pins || [];
-
-                return (
-                  <div key={refNode.id} className="relative group">
-                    <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-1.5 pr-2.5 hover:bg-white/10 transition-all">
-                      <div className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 bg-black flex items-center justify-center">
-                        {hasImage ? (
-                          <img 
-                            src={imageUrl} 
-                            className="w-full h-full object-cover"
-                            alt=""
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <div className="text-white/20">
-                            {refNode.type === 'video-node' ? <Video size={14} /> : 
-                             refNode.type === 'image-node' ? <ImageIcon size={14} /> :
-                             <Type size={14} />}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-bold text-white/80 leading-none mb-0.5">{refNode.data.label}</span>
-                        <span className="text-[7px] font-mono text-white/30 uppercase">{refNode.data.shortId}</span>
-                      </div>
-
-                      {/* PINs for this referenced node */}
-                      {nodePins.length > 0 && (
-                        <>
-                          <div className="w-px h-4 bg-white/10 mx-1" />
-                          <div className="flex items-center gap-1">
-                            {nodePins.map((pin, idx) => (
-                              <div key={pin.id} className="flex items-center gap-1 px-1 py-0.5 rounded bg-white/5 border border-white/5">
-                                <span className="text-[8px] font-bold text-white/40">({idx + 1})</span>
-                                <span className="text-[8px] text-white/60 max-w-[40px] truncate">{pin.label || 'Pin'}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-
-                      <button 
-                        onClick={() => handleRemoveMention(refNode)}
-                        className="ml-1.5 p-1 rounded-md hover:bg-red-500/20 text-white/10 hover:text-red-400 transition-all"
-                      >
-                        <X size={10} />
-                      </button>
+          {/* The Drawer Content Wrapper */}
+          <div className={cn(
+            "transition-all duration-300 h-full flex flex-col p-4 pb-4",
+            isCollapsed ? "opacity-0 pointer-events-none" : (isPinned ? "opacity-60 blur-[1.2px] pointer-events-none justify-end" : "opacity-100 blur-0")
+          )}>
+            {/* Layer 1: Image Thumbnails & Mentions (Flex Wrap) */}
+          {(referencedNodes.length > 0 || (node.data.pins && node.data.pins.length > 0)) && (
+            <>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {/* Local PINs (Source Node Scope) */}
+                {node.data.pins && node.data.pins.length > 0 && (
+                  <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-xl p-1.5 pr-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                      <Hash size={14} />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {node.data.pins.map((pin, idx) => (
+                        <div key={pin.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10">
+                          <span className="text-[9px] font-bold text-white/40">({idx + 1})</span>
+                          <span className="text-[9px] font-medium text-white/80 max-w-[60px] truncate">
+                            {pin.label || 'Pin'}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-            {/* Layer 2: Subtle Divider (Moved above toggle) */}
-            <div className="h-px w-full bg-white/5 mb-3" />
-          </>
-        )}
+                )}
 
-        {/* Layer 3: View Mode Toggle (Right Aligned) */}
-        <div className="flex justify-end mb-2">
-          <div className="flex items-center bg-white/5 rounded-lg p-0.5 border border-white/5">
-            <button
-              onClick={() => setPromptViewMode('edit')}
-              className={cn(
-                "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
-                promptViewMode === 'edit' 
-                  ? "bg-white/10 text-white shadow-sm" 
-                  : "text-white/30 hover:text-white/50"
-              )}
-            >
-              <Edit3 size={10} />
-              <span>Edit</span>
-            </button>
-            <button
-              onClick={() => setPromptViewMode('prev')}
-              className={cn(
-                "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
-                promptViewMode === 'prev' 
-                  ? "bg-emerald-500/20 text-emerald-400 shadow-sm" 
-                  : "text-white/30 hover:text-white/50"
-              )}
-            >
-              <Eye size={10} />
-              <span>Prev</span>
-            </button>
-            <button
-              onClick={() => setPromptViewMode('raw')}
-              className={cn(
-                "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
-                promptViewMode === 'raw' 
-                  ? "bg-blue-500/20 text-blue-400 shadow-sm" 
-                  : "text-white/30 hover:text-white/50"
-              )}
-            >
-              <Terminal size={10} />
-              <span>Raw</span>
-            </button>
-          </div>
-        </div>
+                {/* Referenced Nodes (Target Node Scope) */}
+                {referencedNodes.map(refNode => {
+                  const imageUrl = refNode.data.outputs?.image || refNode.data.uploadedImages?.[0]?.url;
+                  const hasImage = !!imageUrl;
+                  const nodePins = refNode.data.pins || [];
 
-        {/* Layer 4: Input Area */}
-        <div className="relative flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
-          <div className={cn(
-            "flex-1 rounded-xl border p-2 transition-all relative nodrag nowheel flex flex-col min-h-0 overflow-hidden",
-            promptViewMode === 'edit' ? "bg-black/80 border-white/10 focus-within:border-[var(--brand-red)]/50" : 
-            promptViewMode === 'prev' ? "bg-white/[0.03] border-white/10" :
-            "bg-blue-500/[0.03] border-blue-500/10"
-          )}>
-            <div 
-              className="flex-1 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar"
-              onWheel={(e) => e.stopPropagation()}
-            >
-              {promptViewMode === 'edit' ? (
-                <MentionEditor
-                  initialContent={prompt}
-                  onChange={handleEditorChange}
-                  mentions={mentionCandidates}
-                  currentNodeId={node.id}
-                  placeholder="Enter instructions... (Type @ to reference)"
-                  onEnter={handleSend}
-                />
-              ) : promptViewMode === 'prev' ? (
-                <div className="text-sm font-mono text-white/80 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text p-1 w-full max-w-full overflow-hidden">
-                  {resolvedData.displaySegments.length > 0 ? (
-                    resolvedData.displaySegments.map((seg, i) => (
-                      <span 
-                        key={i} 
-                        className={cn(
-                          seg.type === 'reference' && "text-emerald-400/80 underline decoration-emerald-500/20 underline-offset-4 decoration-dashed"
+                  return (
+                    <div key={refNode.id} className="relative group">
+                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-1.5 pr-2.5 hover:bg-white/10 transition-all">
+                        <div className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 bg-black flex items-center justify-center">
+                          {hasImage ? (
+                            <img 
+                              src={imageUrl} 
+                              className="w-full h-full object-cover"
+                              alt=""
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="text-white/20">
+                              {refNode.type === 'video-node' ? <Video size={14} /> : 
+                               refNode.type === 'image-node' ? <ImageIcon size={14} /> :
+                               <Type size={14} />}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-white/80 leading-none mb-0.5">{refNode.data.label}</span>
+                          <span className="text-[7px] font-mono text-white/30 uppercase">{refNode.data.shortId}</span>
+                        </div>
+
+                        {/* PINs for this referenced node */}
+                        {nodePins.length > 0 && (
+                          <>
+                            <div className="w-px h-4 bg-white/10 mx-1" />
+                            <div className="flex items-center gap-1">
+                              {nodePins.map((pin, idx) => (
+                                <div key={pin.id} className="flex items-center gap-1 px-1 py-0.5 rounded bg-white/5 border border-white/5">
+                                  <span className="text-[8px] font-bold text-white/40">({idx + 1})</span>
+                                  <span className="text-[8px] text-white/60 max-w-[40px] truncate">{pin.label || 'Pin'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </>
                         )}
-                      >
-                        {seg.content}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="opacity-30 italic">No content to preview</span>
+
+                        <button 
+                          onClick={() => handleRemoveMention(refNode)}
+                          className="ml-1.5 p-1 rounded-md hover:bg-red-500/20 text-white/10 hover:text-red-400 transition-all"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Layer 2: Subtle Divider (Moved above toggle) */}
+              <div className="h-px w-full bg-white/5 mb-3" />
+            </>
+          )}
+
+          {/* Layer 3: View Mode Toggle (Right Aligned) */}
+          <div className="flex justify-end mb-2">
+            <div className="flex items-center bg-white/5 rounded-lg p-0.5 border border-white/5">
+              <button
+                onClick={() => setPromptViewMode('edit')}
+                className={cn(
+                  "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
+                  promptViewMode === 'edit' 
+                    ? "bg-white/10 text-white shadow-sm" 
+                    : "text-white/30 hover:text-white/50"
+                )}
+              >
+                <Edit3 size={10} />
+                <span>Edit</span>
+              </button>
+              <button
+                onClick={() => setPromptViewMode('prev')}
+                className={cn(
+                  "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
+                  promptViewMode === 'prev' 
+                    ? "bg-emerald-500/20 text-emerald-400 shadow-sm" 
+                    : "text-white/30 hover:text-white/50"
+                )}
+              >
+                <Eye size={10} />
+                <span>Prev</span>
+              </button>
+              <button
+                onClick={() => setPromptViewMode('raw')}
+                className={cn(
+                  "px-2 py-1 rounded-md transition-all flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider",
+                  promptViewMode === 'raw' 
+                    ? "bg-blue-500/20 text-blue-400 shadow-sm" 
+                    : "text-white/30 hover:text-white/50"
+                )}
+              >
+                <Terminal size={10} />
+                <span>Raw</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Layer 4: Input Area */}
+          <div className="relative flex-1 flex flex-col gap-2 min-h-0 overflow-visible">
+            <div className={cn(
+              "flex-1 rounded-xl border p-2 transition-all relative nodrag nowheel flex flex-col min-h-0 overflow-hidden",
+              promptViewMode === 'edit' ? "bg-black/80 border-white/10 focus-within:border-[var(--brand-red)]/50" : 
+              promptViewMode === 'prev' ? "bg-white/[0.03] border-white/10" :
+              "bg-blue-500/[0.03] border-blue-500/10"
+            )}>
+              <div 
+                className="flex-1 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar"
+                onWheel={(e) => e.stopPropagation()}
+                onKeyDown={handleScopedSelectAll}
+                tabIndex={0}
+              >
+                {promptViewMode === 'edit' ? (
+                  <MentionEditor
+                    initialContent={prompt}
+                    onChange={handleEditorChange}
+                    mentions={mentionCandidates}
+                    currentNodeId={node.id}
+                    placeholder="Enter instructions... (Type @ to reference)"
+                    onEnter={handleSend}
+                    autoFocus={selected}
+                    onFocus={() => setIsFocused(true)}
+                    onBlur={() => setIsFocused(false)}
+                  />
+                ) : promptViewMode === 'prev' ? (
+                  <div className="text-sm font-mono text-white/80 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text p-1 w-full max-w-full overflow-hidden">
+                    {resolvedData.displaySegments.length > 0 ? (
+                      resolvedData.displaySegments.map((seg, i) => (
+                        <span 
+                          key={i} 
+                          className={cn(
+                            seg.type === 'reference' && "text-emerald-400/80 underline decoration-emerald-500/20 underline-offset-4 decoration-dashed"
+                          )}
+                        >
+                          {seg.content}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="opacity-30 italic">No content to preview</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm font-mono text-white/50 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text p-1 w-full max-w-full overflow-hidden">
+                    {resolvedData.fullRaw || <span className="opacity-30 italic">No content to output</span>}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between gap-2 mt-auto pt-2">
+              <div className="flex items-center gap-2">
+                {/* Model Selector */}
+                <div className="relative">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'model' ? null : 'model'); }}
+                    className="w-[140px] flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger"
+                  >
+                    <Hash size={12} className="text-[var(--brand-red)] flex-shrink-0" />
+                    <span className="flex-1 text-center truncate px-1">{currentModel ? (currentModel.model.name || currentModel.model.id) : 'Select Model'}</span>
+                    <ChevronUp size={10} className={cn("transition-transform flex-shrink-0", activeDropdown === 'model' && "rotate-180")} />
+                  </button>
+                </div>
+
+                {/* Thinking Level Selector (Text Mode Only) */}
+                {node.data.activeOutputMode === 'text' && currentModel?.provider.type === 'gemini' && (
+                  <div className="relative">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'thinking' ? null : 'thinking'); }}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold transition-all border dropdown-trigger",
+                        (node.data.config?.thinkingLevel && node.data.config?.thinkingLevel !== 'off')
+                          ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
+                          : "bg-white/5 border-white/10 text-white/30 hover:text-white/50"
+                      )}
+                    >
+                      <Settings2 size={12} className={cn((node.data.config?.thinkingLevel && node.data.config?.thinkingLevel !== 'off') ? "text-emerald-400" : "text-white/30")} />
+                      <span>THK</span>
+                      <ChevronUp size={10} className={cn("transition-transform", activeDropdown === 'thinking' && "rotate-180")} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1">
+                {(node.type === 'none' || node.type === 'generator-node') && (
+                  <div className="flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-white/10 mr-2">
+                    <button 
+                      onClick={() => handleTypeSelect('text')}
+                      className={cn(
+                        "p-1.5 rounded-md transition-all",
+                        node.data.activeOutputMode === 'text' ? "bg-emerald-500/20 text-emerald-400" : "text-white/20 hover:text-white/40"
+                      )}
+                      title="Text Output"
+                    >
+                      <Type size={14} />
+                    </button>
+                    <button 
+                      onClick={() => handleTypeSelect('image')}
+                      className={cn(
+                        "p-1.5 rounded-md transition-all",
+                        node.data.activeOutputMode === 'image' ? "bg-blue-500/20 text-blue-400" : "text-white/20 hover:text-white/40"
+                      )}
+                      title="Image Output"
+                    >
+                      <ImageIcon size={14} />
+                    </button>
+                    <button 
+                      onClick={() => handleTypeSelect('video')}
+                      className={cn(
+                        "p-1.5 rounded-md transition-all",
+                        node.data.activeOutputMode === 'video' ? "bg-purple-500/20 text-purple-400" : "text-white/20 hover:text-white/40"
+                      )}
+                      title="Video Output"
+                    >
+                      <Video size={14} />
+                    </button>
+                  </div>
+                )}
+                
+                {node.data.activeOutputMode !== 'text' && (
+                  <div className="relative">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'settings' ? null : 'settings'); }}
+                      className={cn(
+                        "w-[110px] flex items-center px-0 py-1.5 rounded-lg hover:bg-white/10 text-[10px] font-mono font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger",
+                        activeDropdown === 'settings' && "bg-white/10 border-white/20"
+                      )}
+                    >
+                      <div className="w-[28px] flex justify-center flex-shrink-0">
+                        <RatioIcon ratio={currentRatio} size={14} className="text-white/70" />
+                      </div>
+                      <div className="w-[32px] flex justify-center flex-shrink-0">
+                        {currentRatio}
+                      </div>
+                      <div className="w-[12px] flex justify-center flex-shrink-0 opacity-30">
+                        ·
+                      </div>
+                      <div className="w-[38px] flex justify-center flex-shrink-0">
+                        {SIZES.find(s => s.value === currentSize)?.label || currentSize}
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <button 
+                  onClick={(e) => isGenerating ? handleStop(e) : handleSend()}
+                  className={cn(
+                    "w-[84px] h-[32px] flex items-center justify-center rounded-lg bg-[var(--brand-red)] text-white hover:opacity-90 transition-all shadow-lg shadow-red-900/20 text-[10px] font-bold uppercase tracking-widest group disabled:cursor-not-allowed",
+                    isGenerating && "animate-pulse"
                   )}
-                </div>
-              ) : (
-                <div className="text-sm font-mono text-white/50 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text p-1 w-full max-w-full overflow-hidden">
-                  {resolvedData.fullRaw || <span className="opacity-30 italic">No content to output</span>}
-                </div>
-              )}
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="flex items-center justify-center group-hover:hidden">
+                        <Loader2 size={16} className="animate-spin" />
+                      </div>
+                      <div className="hidden group-hover:flex items-center gap-1.5 justify-center">
+                        <span>Stop</span>
+                        <Square size={10} fill="currentColor" />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-1.5 justify-center">
+                      <span>Run</span>
+                      <Play size={10} className="group-hover:fill-white" fill="currentColor" />
+                    </div>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
           
-          <div className="flex items-center justify-between gap-2 mt-auto pt-2">
-            <div className="flex items-center gap-2">
-              {/* Model Selector */}
-              <div className="relative">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'model' ? null : 'model'); }}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger"
-                >
-                  <Hash size={12} className="text-[var(--brand-red)]" />
-                  <span className="max-w-[120px] truncate">{currentModel ? currentModel.model.name : 'Select Model'}</span>
-                  <ChevronUp size={10} className={cn("transition-transform", activeDropdown === 'model' && "rotate-180")} />
-                </button>
-                
-                <AnimatePresence>
-                  {activeDropdown === 'model' && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className="absolute bottom-full left-0 mb-2 w-48 bg-black border border-white/10 rounded-xl shadow-2xl z-[120] overflow-hidden dropdown-container"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="p-2 border-b border-white/10 text-[8px] uppercase tracking-widest text-white/40">Available Models</div>
-                      <div className="max-h-48 overflow-y-auto">
-                        {availableModels.map(({ provider, model }) => (
-                          <button
-                            key={`${provider.id}-${model.id}`}
-                            onClick={() => handleModelSelect(provider.id, model.id)}
-                            className={cn(
-                              "w-full px-3 py-2 text-left text-[10px] hover:bg-white/5 flex flex-col gap-0.5 transition-colors",
-                              currentModel?.model.id === model.id ? "bg-[var(--brand-red)]/20 text-[var(--brand-red)]" : "text-white/70"
-                            )}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold">{model.name}</span>
-                              {currentModel?.model.id === model.id && <Check size={10} />}
-                            </div>
-                            <span className="text-[8px] opacity-40 uppercase">{provider.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+          {isPinned && (
+            <div className="absolute inset-0 bg-black/5 backdrop-blur-[3px] animate-in fade-in duration-500">
+              {/* Centered in the exposed 60px area (Total 75px - 15px hidden = 60px) */}
+              <div className="absolute bottom-0 left-0 right-0 h-[60px] flex items-center justify-center">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-white/10 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in duration-300">
+                   <Lock size={10} className="text-white/50" />
+                   <span className="text-[9px] font-bold text-white/70 uppercase tracking-[0.1em] whitespace-nowrap">
+                     PIN MODE: PROMPT LOCKED
+                   </span>
+                </div>
               </div>
+            </div>
+          )}
 
-              {/* Thinking Level Selector (Text Mode Only) */}
-              {node.data.activeOutputMode === 'text' && currentModel?.provider.type === 'gemini' && (
+          {/* The Handle (Dynamic Disappearance) */}
+          <motion.div 
+            initial={false}
+            animate={{ 
+              opacity: (isCollapsed || isPinned) ? 1 : 0,
+              pointerEvents: (isCollapsed || isPinned) ? 'auto' : 'none'
+            }}
+            className="absolute bottom-0 left-0 w-full h-[24px] flex items-center justify-center bg-white/5 border-t border-white/5 z-[60]"
+          >
+            <div className="w-8 h-1 rounded-full bg-white/20" />
+          </motion.div>
+        </div>
+      </motion.div>
+
+      {/* Layer 2: The Overlays (In Front of Node Body) */}
+      <motion.div
+        initial={{ opacity: 0, y: isDrawerMode ? -340 : 20 }}
+        animate={{ 
+          opacity: 1, 
+          y: isDrawerMode 
+            ? (isCollapsed ? -284 : (isPinned ? -15 : 0))
+            : (isPinned ? -15 : 0),
+          zIndex: 120 // In front of node body (z-10)
+        }}
+        transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 1 }}
+        className={cn(
+          "absolute left-0 w-full pointer-events-none", // pointer-events-none so it doesn't block Layer 1
+          (isCollapsed || isPinned) ? "top-full" : "top-[calc(100%+8px)]"
+        )}
+      >
+        <div className="relative h-[320px] p-4 pb-4 overflow-visible">
+          <div className="h-full flex flex-col justify-end">
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex items-center gap-1">
                 <div className="relative">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'thinking' ? null : 'thinking'); }}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-white/10 text-[10px] font-bold transition-all border dropdown-trigger",
-                      (node.data.config?.thinkingLevel && node.data.config?.thinkingLevel !== 'off')
-                        ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
-                        : "bg-white/5 border-white/10 text-white/30 hover:text-white/50"
-                    )}
-                  >
-                    <Settings2 size={12} className={cn((node.data.config?.thinkingLevel && node.data.config?.thinkingLevel !== 'off') ? "text-emerald-400" : "text-white/30")} />
-                    <span>THK</span>
-                    <ChevronUp size={10} className={cn("transition-transform", activeDropdown === 'thinking' && "rotate-180")} />
-                  </button>
-
                   <AnimatePresence>
-                    {activeDropdown === 'thinking' && (
+                    {activeDropdown === 'model' && (
                       <motion.div 
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute bottom-full left-0 mb-2 w-32 bg-black border border-white/10 rounded-xl shadow-2xl z-[120] overflow-hidden dropdown-container"
+                        className="absolute bottom-full left-0 mb-10 w-42 bg-[#1a1a1a]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-[120] overflow-hidden dropdown-container pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="p-2 border-b border-white/10 text-[8px] uppercase tracking-widest text-white/40">Thinking Level</div>
-                        <div className="p-1 flex flex-col gap-1">
-                          {['high', 'medium', 'low', 'minimal', 'off'].map((level) => (
-                            <button
-                              key={level}
-                              onClick={() => {
-                                updateNodeData(node.id, { config: { ...node.data.config, thinkingLevel: level as any } });
-                                setActiveDropdown(null);
-                              }}
-                              className={cn(
-                                "w-full px-3 py-2 text-left text-[10px] rounded-lg transition-all capitalize flex items-center justify-between",
-                                (node.data.config?.thinkingLevel === level || (!node.data.config?.thinkingLevel && level === 'off'))
-                                  ? "bg-emerald-500/20 text-emerald-400" 
-                                  : "text-white/50 hover:bg-white/5 hover:text-white"
-                              )}
-                            >
-                              <span>{level}</span>
-                              {(node.data.config?.thinkingLevel === level || (!node.data.config?.thinkingLevel && level === 'off')) && <Check size={10} />}
-                            </button>
+                        <div className="p-2 border-b border-white/10 text-[8px] uppercase tracking-widest text-white/40">Available Models</div>
+                        <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                          {/* Group by Provider */}
+                          {providers.filter(p => p.enabled && p.models.some(m => m.enabled && m.capabilities[node.data.activeOutputMode])).map((provider) => (
+                            <div key={provider.id} className="border-b border-white/5 last:border-0">
+                              <div className="px-3 py-1.5 bg-white/[0.02] text-[7px] font-bold text-white/20 uppercase tracking-[0.2em]">
+                                {provider.name}
+                              </div>
+                              <div className="p-1 flex flex-col gap-0.5">
+                                {provider.models.filter(m => m.enabled && m.capabilities[node.data.activeOutputMode]).map((model) => {
+                                  const isSelected = currentModel?.provider.id === provider.id && currentModel?.model.id === model.id;
+                                  return (
+                                    <button
+                                      key={model.id}
+                                      onClick={() => handleModelSelect(provider.id, model.id)}
+                                      className={cn(
+                                        "w-full px-2.5 py-2 text-left text-[10px] rounded-lg transition-all flex flex-col gap-0.5",
+                                        isSelected 
+                                          ? "bg-[var(--brand-red)]/20 text-[var(--brand-red)]" 
+                                          : "text-white/60 hover:bg-white/5 hover:text-white"
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-bold truncate max-w-[140px]">
+                                          {model.name || model.id}
+                                        </span>
+                                        {isSelected && <Check size={10} />}
+                                      </div>
+                                      {!model.name && (
+                                        <span className="text-[7px] opacity-30 font-mono uppercase">ID: {model.id}</span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           ))}
+                          
+                          {availableModels.length === 0 && (
+                            <div className="p-8 text-center">
+                              <span className="text-[10px] text-white/20 italic">No models available for this mode</span>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
-              )}
-            </div>
 
-            <div className="flex items-center gap-1">
-              {(node.type === 'none' || node.type === 'generator-node') && (
-                <div className="flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-white/10 mr-2">
-                  <button 
-                    onClick={() => handleTypeSelect('text')}
-                    className={cn(
-                      "p-1.5 rounded-md transition-all",
-                      node.data.activeOutputMode === 'text' ? "bg-emerald-500/20 text-emerald-400" : "text-white/20 hover:text-white/40"
-                    )}
-                    title="Text Output"
-                  >
-                    <Type size={14} />
-                  </button>
-                  <button 
-                    onClick={() => handleTypeSelect('image')}
-                    className={cn(
-                      "p-1.5 rounded-md transition-all",
-                      node.data.activeOutputMode === 'image' ? "bg-blue-500/20 text-blue-400" : "text-white/20 hover:text-white/40"
-                    )}
-                    title="Image Output"
-                  >
-                    <ImageIcon size={14} />
-                  </button>
-                  <button 
-                    onClick={() => handleTypeSelect('video')}
-                    className={cn(
-                      "p-1.5 rounded-md transition-all",
-                      node.data.activeOutputMode === 'video' ? "bg-purple-500/20 text-purple-400" : "text-white/20 hover:text-white/40"
-                    )}
-                    title="Video Output"
-                  >
-                    <Video size={14} />
-                  </button>
-                </div>
-              )}
-              
-              {node.data.activeOutputMode !== 'text' && (
-                <div className="relative">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setActiveDropdown(activeDropdown === 'settings' ? null : 'settings'); }}
-                    className={cn(
-                      "flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-[10px] font-mono font-bold text-white transition-all bg-white/5 border border-white/10 dropdown-trigger",
-                      activeDropdown === 'settings' && "bg-white/10 border-white/20"
-                    )}
-                  >
-                    <RatioIcon ratio={currentRatio} size={14} className="text-white/70" />
-                    <span>{currentRatio} · {SIZES.find(s => s.value === currentSize)?.label || currentSize}</span>
-                  </button>
-
-                  <AnimatePresence>
-                    {activeDropdown === 'settings' && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute bottom-full right-0 mb-2 w-[320px] bg-[#1a1a1a]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-[120] overflow-hidden p-4 dropdown-container"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="space-y-6">
-                          {/* Quality Section */}
-                          <div className="space-y-3">
-                            <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest">画质</div>
-                            <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
-                              {SIZES.map((size) => (
-                                <button
-                                  key={size.value}
-                                  onClick={() => handleSizeSelect(size.value)}
-                                  className={cn(
-                                    "flex-1 py-2 text-[11px] font-bold rounded-lg transition-all",
-                                    currentSize === size.value 
-                                      ? "bg-white/10 text-white shadow-sm" 
-                                      : "text-white/30 hover:text-white/50"
-                                  )}
-                                >
-                                  {size.label}
-                                </button>
-                              ))}
-                            </div>
+                {node.data.activeOutputMode === 'text' && currentModel?.provider.type === 'gemini' && (
+                  <div className="relative">
+                    <AnimatePresence>
+                      {activeDropdown === 'thinking' && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute bottom-full left-0 mb-10 w-32 bg-[#1a1a1a]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-[120] overflow-hidden dropdown-container pointer-events-auto"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="p-2 border-b border-white/10 text-[8px] uppercase tracking-widest text-white/40">Thinking Level</div>
+                          <div className="p-1 flex flex-col gap-1">
+                            {['high', 'medium', 'low', 'minimal', 'off'].map((level) => (
+                              <button
+                                key={level}
+                                onClick={() => {
+                                  updateNodeData(node.id, { config: { ...node.data.config, thinkingLevel: level as any } });
+                                  setActiveDropdown(null);
+                                }}
+                                className={cn(
+                                  "w-full px-3 py-2 text-left text-[10px] rounded-lg transition-all capitalize flex items-center justify-between",
+                                  (node.data.config?.thinkingLevel === level || (!node.data.config?.thinkingLevel && level === 'off'))
+                                    ? "bg-emerald-500/20 text-emerald-400" 
+                                    : "text-white/50 hover:bg-white/5 hover:text-white"
+                                )}
+                              >
+                                <span>{level}</span>
+                                {(node.data.config?.thinkingLevel === level || (!node.data.config?.thinkingLevel && level === 'off')) && <Check size={10} />}
+                              </button>
+                            ))}
                           </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+              </div>
 
-                          {/* Ratio Section */}
-                          <div className="space-y-3">
-                            <div className="text-[10px] font-bold text-white/40 uppercase tracking-widest">比例</div>
-                            <div className="bg-black/40 p-3 rounded-xl border border-white/5">
-                              <div className="grid grid-cols-5 gap-y-6 gap-x-2">
-                                {/* Auto Button Placeholder */}
-                                <div className="col-span-1 flex flex-col items-center gap-2">
-                                  <button 
-                                    className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center text-white/20 hover:text-white/40 transition-all"
-                                    title="自适应"
-                                  >
-                                    <div className="relative w-5 h-5 border border-dashed border-current rounded-sm">
-                                      <div className="absolute inset-1 border border-current rounded-[1px]" />
-                                    </div>
-                                  </button>
-                                  <span className="text-[9px] text-white/20 font-medium">自适应</span>
-                                </div>
-
-                                {/* Ratio Grid */}
-                                {RATIOS.map((ratio) => (
-                                  <div key={ratio.value} className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-1">
+                {node.data.activeOutputMode !== 'text' && (
+                  <div className="relative">
+                    <AnimatePresence>
+                      {activeDropdown === 'settings' && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          className="absolute bottom-full right-0 mb-10 w-[320px] bg-[#1a1a1a]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-[120] overflow-hidden p-3 dropdown-container pointer-events-auto"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex gap-3">
+                            {/* Ratio Section (Left) */}
+                            <div className="flex-1 flex flex-col">
+                              <div className="grid grid-cols-4 gap-1 mb-1.5">
+                                {/* Row 1: 3 items (5:4, 4:5, 21:9) */}
+                                {RATIOS.slice(0, 3).map((ratio) => (
+                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
                                     <button
                                       onClick={() => handleRatioSelect(ratio.value)}
                                       className={cn(
-                                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all border",
+                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
                                         currentRatio === ratio.value 
                                           ? "bg-white/10 border-white/20 text-white" 
                                           : "bg-transparent border-transparent text-white/30 hover:text-white/50"
                                       )}
                                     >
-                                      <RatioIcon ratio={ratio.value} size={20} />
+                                      <RatioIcon ratio={ratio.value} size={14} />
                                     </button>
                                     <span className={cn(
-                                      "text-[9px] font-medium transition-colors",
+                                      "text-[7px] font-medium transition-colors",
+                                      currentRatio === ratio.value ? "text-white/70" : "text-white/20"
+                                    )}>
+                                      {ratio.label}
+                                    </span>
+                                  </div>
+                                ))}
+                                <div /> {/* Empty cell for 4th column in Row 1 */}
+
+                                {/* Row 2: 4 items (4:3, 3:4, 3:2, 2:3) */}
+                                {RATIOS.slice(3, 7).map((ratio) => (
+                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
+                                    <button
+                                      onClick={() => handleRatioSelect(ratio.value)}
+                                      className={cn(
+                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
+                                        currentRatio === ratio.value 
+                                          ? "bg-white/10 border-white/20 text-white" 
+                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                      )}
+                                    >
+                                      <RatioIcon ratio={ratio.value} size={14} />
+                                    </button>
+                                    <span className={cn(
+                                      "text-[7px] font-medium transition-colors",
+                                      currentRatio === ratio.value ? "text-white/70" : "text-white/20"
+                                    )}>
+                                      {ratio.label}
+                                    </span>
+                                  </div>
+                                ))}
+
+                                {/* Row 3: 4 items (AUTO, 1:1, 16:9, 9:16) */}
+                                {RATIOS.slice(7, 11).map((ratio) => (
+                                  <div key={ratio.value} className="flex flex-col items-center gap-0.5">
+                                    <button
+                                      onClick={() => handleRatioSelect(ratio.value)}
+                                      className={cn(
+                                        "w-[30px] h-[30px] rounded-lg flex items-center justify-center transition-all border",
+                                        currentRatio === ratio.value 
+                                          ? "bg-white/10 border-white/20 text-white" 
+                                          : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                      )}
+                                    >
+                                      {ratio.value === 'auto' ? (
+                                        <div className="relative w-3 h-3 border border-dashed border-current rounded-sm">
+                                          <div className="absolute inset-0.5 border border-current rounded-[1px]" />
+                                        </div>
+                                      ) : (
+                                        <RatioIcon ratio={ratio.value} size={14} />
+                                      )}
+                                    </button>
+                                    <span className={cn(
+                                      "text-[7px] font-medium transition-colors",
                                       currentRatio === ratio.value ? "text-white/70" : "text-white/20"
                                     )}>
                                       {ratio.label}
@@ -995,76 +1188,48 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
                                   </div>
                                 ))}
                               </div>
+                              <div className="text-[8px] font-bold text-white/40 uppercase tracking-widest text-center mt-0.5">Ratio</div>
+                            </div>
+
+                            {/* Divider */}
+                            <div className="w-px bg-white/10 self-stretch" />
+
+                            {/* Quality Section (Right) */}
+                            <div className="w-14 flex flex-col justify-end">
+                              <div className="flex flex-col gap-1 mb-1.5">
+                                {SIZES.map((size) => (
+                                  <button
+                                    key={size.value}
+                                    onClick={() => handleSizeSelect(size.value)}
+                                    className={cn(
+                                      "w-full py-1 text-[10px] font-bold rounded-lg transition-all border",
+                                      currentSize === size.value 
+                                        ? "bg-white/10 border-white/20 text-white shadow-sm" 
+                                        : "bg-transparent border-transparent text-white/30 hover:text-white/50"
+                                    )}
+                                  >
+                                    {size.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest text-center">Quality</div>
                             </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-            </div>
-
-            <button 
-                onClick={handleSend}
-                disabled={isGenerating}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--brand-red)] text-white hover:opacity-90 transition-all shadow-lg shadow-red-900/20 text-[10px] font-bold uppercase tracking-widest group disabled:opacity-50 disabled:cursor-not-allowed",
-                  isGenerating && "animate-pulse"
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 )}
-              >
-                {isGenerating ? (
-                  <>
-                    <span>Running</span>
-                    <Loader2 size={12} className="animate-spin" />
-                  </>
-                ) : (
-                  <>
-                    <span>Run</span>
-                    <Play size={12} className="group-hover:fill-white" fill="currentColor" />
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        {isPinned && (
-          <div className="absolute inset-0 bg-black/5 backdrop-blur-[3px] animate-in fade-in duration-500">
-            {/* Centered in the exposed 60px area (Total 75px - 15px hidden = 60px) */}
-            <div className="absolute bottom-0 left-0 right-0 h-[60px] flex items-center justify-center">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-white/10 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in duration-300">
-                 <Lock size={10} className="text-white/50" />
-                 <span className="text-[9px] font-bold text-white/70 uppercase tracking-[0.1em] whitespace-nowrap">
-                   PIN MODE: PROMPT LOCKED
-                 </span>
               </div>
             </div>
           </div>
-        )}
-
-        {/* The Handle (Dynamic Disappearance) */}
-        <motion.div 
-          initial={false}
-          animate={{ 
-            opacity: (isCollapsed || isPinned) ? 1 : 0,
-            pointerEvents: (isCollapsed || isPinned) ? 'auto' : 'none'
-          }}
-          className="absolute bottom-0 left-0 w-full h-[36px] flex items-center justify-center bg-white/5 border-t border-white/5 z-[60]"
-        >
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-8 h-1 rounded-full bg-white/20 mb-0.5" />
-            <div className="flex items-center gap-2 text-[8px] font-bold text-white/40 uppercase tracking-[0.4em]">
-              <span>Prompt</span>
-            </div>
-          </div>
-        </motion.div>
-      </div>
-    
+        </div>
+      </motion.div>
+ 
     <ConfirmModal 
       isOpen={showConfirmModal}
-      title="确认删除引用"
-      message={`确定要删除对 ${nodes.find(n => n.id === pendingDeletion?.nodeId)?.data.label} 的引用及其连线吗？`}
+      title="Confirm Delete Reference"
+      message={`Are you sure you want to remove the reference to ${nodes.find(n => n.id === pendingDeletion?.nodeId)?.data.label} and its connection?`}
       onConfirm={(dontShowAgain) => {
         if (dontShowAgain) setSkipDeleteConfirm(true);
         if (pendingDeletion) performDeletion(pendingDeletion.nodeId, pendingDeletion.mentionText);
@@ -1077,8 +1242,8 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
 
     <ConfirmModal 
       isOpen={showOverwriteModal}
-      title="确认覆盖内容"
-      message="当前节点已有文字内容，生成新内容将覆盖现有文字。是否继续？"
+      title="Confirm Overwrite"
+      message="This node already has text content. Generating new content will overwrite it. Continue?"
       onConfirm={(dontShowAgain) => {
         if (dontShowAgain) setSkipOverwriteConfirm(true);
         setShowOverwriteModal(false);
@@ -1088,6 +1253,6 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
         setShowOverwriteModal(false);
       }}
     />
-  </motion.div>
-);
+    </>
+  );
 };

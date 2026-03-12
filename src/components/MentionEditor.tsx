@@ -16,6 +16,9 @@ interface MentionEditorProps {
   placeholder?: string;
   className?: string;
   onEnter?: () => void;
+  autoFocus?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
 import { useTapStore } from '../store';
@@ -27,7 +30,10 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
   currentNodeId,
   placeholder,
   className,
-  onEnter
+  onEnter,
+  autoFocus,
+  onFocus,
+  onBlur
 }) => {
   const { nodes, edges, setEdges } = useTapStore();
   
@@ -118,10 +124,17 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
       }),
     ],
     content: parseMentions(initialContent),
+    autofocus: autoFocus ? 'end' : false,
     onUpdate: ({ editor }) => {
       const json = editor.getJSON();
       const text = serializeMentions(json);
       onChange(text);
+    },
+    onFocus: () => {
+      onFocus?.();
+    },
+    onBlur: () => {
+      onBlur?.();
     },
     editorProps: {
       attributes: {
@@ -140,6 +153,13 @@ export const MentionEditor: React.FC<MentionEditorProps> = ({
       }
     },
   });
+
+  // Focus when autoFocus changes to true
+  useEffect(() => {
+    if (autoFocus && editor) {
+      editor.commands.focus('end');
+    }
+  }, [autoFocus, editor]);
 
   // Sync connected state of mentions
   useEffect(() => {

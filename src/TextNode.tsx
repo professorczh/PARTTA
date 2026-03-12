@@ -130,6 +130,18 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
     });
   };
 
+  const handleScopedSelectAll = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      e.preventDefault();
+      e.stopPropagation();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(e.currentTarget);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+  };
+
   return (
     <motion.div 
       initial={{ scale: 0.9, opacity: 0 }}
@@ -242,7 +254,11 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
           "bg-white/[0.03] border-white/10"
         )}>
           {isGenerated ? (
-            <div className="w-full h-full overflow-y-auto pr-1 custom-scrollbar relative">
+            <div 
+              className="w-full h-full overflow-y-auto pr-1 custom-scrollbar relative"
+              onKeyDown={handleScopedSelectAll}
+              tabIndex={0}
+            >
               <div className="text-sm font-mono text-white/90 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text">
                 {data.outputs?.text}
               </div>
@@ -273,7 +289,10 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
               )}
             </div>
           ) : viewMode === 'edit' ? (
-            <div className="w-full h-full overflow-y-auto custom-scrollbar cursor-text p-0">
+            <div 
+              className="w-full h-full overflow-y-auto custom-scrollbar cursor-text p-0"
+              onKeyDown={handleScopedSelectAll}
+            >
               <MentionEditor
                 initialContent={data.prompt || ''}
                 onChange={handleEditorChange}
@@ -287,6 +306,8 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
             <div 
               className="w-full h-full overflow-y-auto custom-scrollbar"
               onWheel={(e) => e.stopPropagation()}
+              onKeyDown={handleScopedSelectAll}
+              tabIndex={0}
             >
               {viewMode === 'prev' ? (
                 <div className="text-sm font-mono text-white/80 whitespace-pre-wrap break-words leading-relaxed select-text cursor-text">
@@ -316,8 +337,15 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
       </div>
     </div>
 
+      {/* Floating Control Panel */}
+      <NodePromptInput 
+        node={props as any} 
+        selected={selected} 
+        onExpandChange={setIsPromptActive}
+      />
+
       {/* Ports */}
-      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
+      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticPort 
           type="text" 
           id="output-text" 
@@ -327,16 +355,9 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         />
       </div>
       
-      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-50 pointer-events-auto">
+      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticInput isTargetOfConnection={isTargetOfConnection} dragging={dragging} />
       </div>
-
-      {/* Floating Control Panel */}
-      <NodePromptInput 
-        node={props as any} 
-        selected={selected} 
-        onExpandChange={setIsPromptActive}
-      />
     </motion.div>
   );
 });

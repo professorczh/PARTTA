@@ -82,19 +82,17 @@ const SortableModelItem = ({
       ref={setNodeRef}
       style={style}
       className={clsx(
-        "bg-white/5 border border-white/10 rounded-xl p-2 space-y-2 group relative transition-all",
-        !model.enabled && "opacity-40 grayscale-[0.5]"
+        "bg-white/5 border rounded-xl group relative transition-all flex overflow-hidden",
+        model.enabled ? "border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.05)]" : "border-white/10 opacity-60 grayscale-[0.2]"
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <button 
-          {...attributes} 
-          {...listeners}
-          className="p-1 text-white/20 hover:text-white/40 cursor-grab active:cursor-grabbing"
-        >
-          <GripVertical size={12} />
-        </button>
-        
+      {/* Power Strip on the left (Status Ribbon) */}
+      <div 
+        className={clsx(
+          "w-8 flex items-center justify-center border-r transition-all duration-300",
+          model.enabled ? "bg-emerald-500/20 border-emerald-500/30" : "bg-black/40 border-white/5"
+        )}
+      >
         <button
           onClick={() => {
             const newModels = [...selectedProvider.models];
@@ -102,62 +100,75 @@ const SortableModelItem = ({
             handleUpdateProvider(selectedProvider.id, { models: newModels });
           }}
           className={clsx(
-            "p-1 rounded-md transition-all",
-            model.enabled ? "text-emerald-500 hover:bg-emerald-500/10" : "text-white/20 hover:bg-white/10"
+            "w-full h-full flex items-center justify-center transition-all duration-300",
+            model.enabled ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.6)]" : "text-white/10 hover:text-white/30"
           )}
           title={model.enabled ? "Disable Model" : "Enable Model"}
         >
-          <Power size={10} />
-        </button>
-
-        <select
-          disabled={selectedProvider.defaultProtocol !== 'mix'}
-          value={selectedProvider.defaultProtocol === 'mix' ? (model.protocol || 'openai-compatible') : selectedProvider.defaultProtocol}
-          onChange={(e) => {
-            const newModels = [...selectedProvider.models];
-            newModels[globalIdx] = { ...model, protocol: e.target.value as any };
-            handleUpdateProvider(selectedProvider.id, { models: newModels });
-          }}
-          className={clsx(
-            "bg-black/40 border border-white/10 rounded-md px-1 py-0.5 text-[9px] font-bold focus:outline-none transition-all",
-            selectedProvider.defaultProtocol === 'mix' ? "text-[var(--brand-red)] cursor-pointer" : "text-zinc-600 cursor-not-allowed opacity-50"
-          )}
-        >
-          <option value="openai-compatible">O</option>
-          <option value="gemini">G</option>
-        </select>
-        <input 
-          type="text"
-          value={model.id}
-          onChange={(e) => {
-            const newModels = [...selectedProvider.models];
-            newModels[globalIdx] = { ...model, id: e.target.value };
-            handleUpdateProvider(selectedProvider.id, { models: newModels });
-          }}
-          className="bg-transparent border-none p-0 text-[10px] font-mono text-white focus:outline-none focus:ring-0 flex-1 min-w-0"
-          placeholder="Model ID"
-        />
-        <button 
-          onClick={() => {
-            const newModels = selectedProvider.models.filter((_, i) => i !== globalIdx);
-            handleUpdateProvider(selectedProvider.id, { models: newModels });
-          }}
-          className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-500 transition-all"
-        >
-          <X size={10} />
+          <Power size={14} className={clsx(model.enabled && "animate-pulse-subtle")} />
         </button>
       </div>
-      <input 
-        type="text"
-        value={model.name}
-        onChange={(e) => {
-          const newModels = [...selectedProvider.models];
-          newModels[globalIdx] = { ...model, name: e.target.value };
-          handleUpdateProvider(selectedProvider.id, { models: newModels });
-        }}
-        className="w-full bg-transparent border-none p-0 text-[9px] text-[var(--app-text-muted)] italic focus:outline-none focus:ring-0 px-5"
-        placeholder="Display Name (Optional)"
-      />
+
+      <div className="flex-1 p-2 space-y-2">
+        <div className="flex items-center gap-1.5">
+          <select
+            disabled={selectedProvider.defaultProtocol !== 'mix'}
+            value={selectedProvider.defaultProtocol === 'mix' ? (model.protocol || 'openai-compatible') : selectedProvider.defaultProtocol}
+            onChange={(e) => {
+              const newModels = [...selectedProvider.models];
+              newModels[globalIdx] = { ...model, protocol: e.target.value as any };
+              handleUpdateProvider(selectedProvider.id, { models: newModels });
+            }}
+            className={clsx(
+              "bg-black/40 border border-white/10 rounded-md px-1 py-0.5 text-[9px] font-bold focus:outline-none transition-all",
+              selectedProvider.defaultProtocol === 'mix' ? "text-[var(--brand-red)] cursor-pointer" : "text-zinc-600 cursor-not-allowed opacity-50"
+            )}
+          >
+            <option value="openai-compatible">O</option>
+            <option value="gemini">G</option>
+          </select>
+          <input 
+            type="text"
+            value={model.id}
+            onChange={(e) => {
+              const newModels = [...selectedProvider.models];
+              newModels[globalIdx] = { ...model, id: e.target.value };
+              handleUpdateProvider(selectedProvider.id, { models: newModels });
+            }}
+            className="bg-transparent border-none p-0 text-[10px] font-mono text-white focus:outline-none focus:ring-0 flex-1 min-w-0"
+            placeholder="Model ID"
+          />
+          <button 
+            onClick={() => {
+              const newModels = selectedProvider.models.filter((_, i) => i !== globalIdx);
+              handleUpdateProvider(selectedProvider.id, { models: newModels });
+            }}
+            className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-500 transition-all"
+          >
+            <X size={10} />
+          </button>
+        </div>
+        <input 
+          type="text"
+          value={model.name}
+          onChange={(e) => {
+            const newModels = [...selectedProvider.models];
+            newModels[globalIdx] = { ...model, name: e.target.value };
+            handleUpdateProvider(selectedProvider.id, { models: newModels });
+          }}
+          className="w-full bg-transparent border-none p-0 text-[9px] text-[var(--app-text-muted)] italic focus:outline-none focus:ring-0 px-1"
+          placeholder="Display Name (Optional)"
+        />
+      </div>
+
+      {/* Drag Handle on the right */}
+      <button 
+        {...attributes} 
+        {...listeners}
+        className="w-8 flex items-center justify-center cursor-grab active:cursor-grabbing hover:bg-white/5 border-l border-white/5 transition-all text-white/10 hover:text-white/30 group-hover:text-white/20"
+      >
+        <GripVertical size={14} />
+      </button>
     </div>
   );
 };
@@ -195,6 +206,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Initialize local state when modal opens
   useEffect(() => {
@@ -202,6 +214,11 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
       setLocalProviders(JSON.parse(JSON.stringify(storeProviders)));
       setLocalGlobalDefaults({ ...storeGlobalDefaults });
       setSelectedProviderId('global-settings');
+      // Reset UI states
+      setShowUnsavedConfirm(false);
+      setShowSaveToast(false);
+      setConfirmRemoveId(null);
+      setIsSaving(false);
     }
   }, [isOpen, storeProviders, storeGlobalDefaults]);
 
@@ -245,10 +262,10 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
   };
 
   const handleSave = () => {
+    if (isSaving) return;
+    setIsSaving(true);
+
     // Commit all local changes to store
-    // This is a bit brute force but works with the current store structure
-    // In a real app we might have a single 'saveProviders' action
-    
     // 1. Update providers
     // First remove ones that are gone
     const currentStoreIds = storeProviders.map(p => p.id);
@@ -273,12 +290,17 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
     storeSetGlobalDefault('video', localGlobalDefaults.video);
 
     setShowSaveToast(true);
+    
+    // Use a ref or a flag to prevent the "unsaved changes" dialog from showing during the close timeout
+    // Actually, setting isSaving to true and checking it in handleCloseAttempt is better
+    
     setTimeout(() => {
       onClose();
-    }, 1000);
+    }, 800);
   };
 
   const handleCloseAttempt = () => {
+    if (isSaving) return; // Don't allow closing while saving
     if (hasChanges) {
       setShowUnsavedConfirm(true);
     } else {
@@ -410,7 +432,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         : "hover:bg-white/5 border border-transparent"
                     )}
                   >
-                    <Zap size={14} className="text-yellow-500" fill="currentColor" />
+                    <Zap size={14} className="text-[var(--brand-red)]" fill="currentColor" />
                     <div className="text-[11px] font-bold uppercase tracking-widest">Global Defaults</div>
                   </button>
                 </div>
@@ -454,11 +476,11 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                 {selectedProviderId === 'global-settings' ? (
                   <div className="max-w-3xl mx-auto space-y-8">
                     <section className="space-y-6">
-                      <div className="flex items-center gap-3 border-b border-white/10 pb-4 justify-between">
-                        <div className="flex items-center gap-3">
-                          <Zap size={20} className="text-yellow-500" fill="currentColor" />
-                          <h3 className="text-sm font-display font-bold uppercase tracking-widest">Global Default Models</h3>
-                        </div>
+                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+                        <Zap size={14} className="text-[var(--brand-red)]" />
+                        <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-white">
+                          Global Default Models
+                        </h3>
                       </div>
                       
                       <div className="grid gap-6">
@@ -502,42 +524,28 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                 ) : selectedProvider ? (
                   <div className="max-w-3xl mx-auto space-y-8">
                     {/* Basic Info Section */}
-                    <section className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-[var(--app-text-muted)] flex items-center gap-2">
-                          <Globe size={12} /> Provider Configuration
-                        </h3>
+                    <section className="space-y-6">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-mono text-[var(--app-text-muted)] uppercase">Status:</span>
-                          <button 
-                            onClick={() => handleTestProvider(selectedProvider)}
-                            disabled={testStatus[selectedProvider.id] === 'loading'}
-                            className={clsx(
-                              "px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest transition-all flex items-center gap-2",
-                              testStatus[selectedProvider.id] === 'success' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
-                              testStatus[selectedProvider.id] === 'error' ? "bg-red-500/20 text-red-400 border border-red-500/30" :
-                              "bg-white/5 text-white border border-white/10 hover:bg-white/10"
-                            )}
-                          >
-                            {testStatus[selectedProvider.id] === 'loading' ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
-                            {testStatus[selectedProvider.id] === 'success' ? 'Connected' : 
-                             testStatus[selectedProvider.id] === 'error' ? 'Failed' : 'Test Connection'}
-                          </button>
-                          <div className="h-4 w-px bg-white/10 mx-1" />
-                          <button 
-                            onClick={() => handleUpdateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
-                            className={clsx(
-                              "px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest transition-all",
-                              selectedProvider.enabled ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-500 border border-zinc-700"
-                            )}
-                          >
-                            {selectedProvider.enabled ? 'Active' : 'Disabled'}
-                          </button>
+                          <Globe size={14} className="text-[var(--brand-red)]" />
+                          <h3 className="text-[10px] font-display uppercase tracking-[0.2em] text-white">
+                            Provider Configuration
+                          </h3>
                         </div>
+                        <button 
+                          onClick={() => handleUpdateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
+                          className={clsx(
+                            "px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest transition-all",
+                            selectedProvider.enabled ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                          )}
+                        >
+                          {selectedProvider.enabled ? 'Active' : 'Disabled'}
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
+                      {/* Row 1: Name, URL, Protocol */}
+                      <div className="flex gap-4 items-end">
+                        <div className="flex-[1.5] space-y-1.5">
                           <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Display Name</label>
                           <input 
                             type="text"
@@ -547,7 +555,17 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                             placeholder="e.g. 12AI Aggregator"
                           />
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="flex-[5.5] space-y-1.5">
+                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Base URL</label>
+                          <input 
+                            type="text"
+                            value={selectedProvider.baseUrl}
+                            onChange={(e) => handleUpdateProvider(selectedProvider.id, { baseUrl: e.target.value })}
+                            className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all"
+                            placeholder={selectedProvider.type === 'gemini' ? "https://generativelanguage.googleapis.com" : "https://api.openai.com/v1"}
+                          />
+                        </div>
+                        <div className="flex-[3] space-y-1.5">
                           <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Default Protocol</label>
                           <div className="flex bg-white/5 border border-[var(--app-border)] rounded-xl p-1">
                             {(['openai-compatible', 'gemini', 'mix'] as const).map(p => (
@@ -555,7 +573,7 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                 key={p}
                                 onClick={() => handleUpdateProvider(selectedProvider.id, { defaultProtocol: p })}
                                 className={clsx(
-                                  "flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                                  "flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest transition-all",
                                   selectedProvider.defaultProtocol === p 
                                     ? "bg-[var(--brand-red)] text-white shadow-lg" 
                                     : "text-[var(--app-text-muted)] hover:text-white"
@@ -568,26 +586,16 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">Base URL</label>
-                        <input 
-                          type="text"
-                          value={selectedProvider.baseUrl}
-                          onChange={(e) => handleUpdateProvider(selectedProvider.id, { baseUrl: e.target.value })}
-                          className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all"
-                          placeholder={selectedProvider.type === 'gemini' ? "https://generativelanguage.googleapis.com" : "https://api.openai.com/v1"}
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">API Secret Key</label>
-                        <div className="flex gap-3">
-                          <div className="relative flex-1">
+                      {/* Row 2: API Key & Unified Connection Hub */}
+                      <div className="flex gap-4 items-end">
+                        <div className="flex-[7] space-y-1.5">
+                          <label className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)] ml-1">API Secret Key</label>
+                          <div className="relative">
                             <input 
                               type={showKey[selectedProvider.id] ? "text" : "password"}
                               value={selectedProvider.apiKey}
                               onChange={(e) => handleUpdateProvider(selectedProvider.id, { apiKey: e.target.value })}
-                              className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 py-2.5 text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all pr-12"
+                              className="w-full bg-white/5 border border-[var(--app-border)] rounded-xl px-4 h-[38px] text-xs font-mono focus:outline-none focus:border-[var(--brand-red)] transition-all pr-12"
                               placeholder="sk-••••••••••••••••••••••••"
                             />
                             <button 
@@ -597,23 +605,51 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                               {showKey[selectedProvider.id] ? <EyeOff size={14} /> : <Eye size={14} />}
                             </button>
                           </div>
-                          <button 
-                            onClick={() => handleTestProvider(selectedProvider)}
-                            disabled={testStatus[selectedProvider.id] === 'loading'}
-                            className={clsx(
-                              "px-6 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center gap-2 min-w-[100px] justify-center",
-                              testStatus[selectedProvider.id] === 'success' ? "bg-emerald-500 text-white" :
-                              testStatus[selectedProvider.id] === 'error' ? "bg-red-500 text-white" :
-                              "bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-lg shadow-purple-500/20"
-                            )}
-                          >
-                            {testStatus[selectedProvider.id] === 'loading' ? <Loader2 size={14} className="animate-spin" /> : '测试'}
-                          </button>
                         </div>
-                        <p className="text-[9px] text-[var(--app-text-muted)] ml-1 flex items-center gap-1">
-                          <ShieldCheck size={10} /> Keys are stored locally in your browser's LocalStorage.
-                        </p>
+                        
+                        <div className="flex-[3] pb-0.5">
+                          <div className="flex items-center bg-white/5 border border-white/10 rounded-xl h-[38px] overflow-hidden w-full">
+                            {/* Status Section */}
+                            <div className="flex-1 flex items-center gap-3 px-4 border-r border-white/10 h-full">
+                              <span className="text-[11px] font-bold text-white/60 uppercase tracking-tight">Status:</span>
+                              <div className={clsx(
+                                "transition-all duration-500",
+                                testStatus[selectedProvider.id] === 'success' ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" :
+                                testStatus[selectedProvider.id] === 'error' ? "text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]" :
+                                testStatus[selectedProvider.id] === 'loading' ? "text-blue-400" :
+                                "text-white/20"
+                              )}>
+                                {testStatus[selectedProvider.id] === 'loading' ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Zap size={14} fill={testStatus[selectedProvider.id] === 'success' ? "currentColor" : "none"} />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Test Button Section */}
+                            <div className="px-1.5 py-1.5 h-full flex items-center">
+                              <button 
+                                onClick={() => handleTestProvider(selectedProvider)}
+                                disabled={testStatus[selectedProvider.id] === 'loading'}
+                                className={clsx(
+                                  "h-full px-4 rounded-lg text-[10px] font-bold uppercase tracking-[0.1em] transition-all disabled:opacity-50 flex items-center justify-center",
+                                  "bg-white/10 border border-white/10 shadow-[0_2px_10px_rgba(0,0,0,0.2)] hover:bg-white/20 hover:border-white/20 active:scale-95 active:bg-white/5",
+                                  testStatus[selectedProvider.id] === 'success' ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" :
+                                  testStatus[selectedProvider.id] === 'error' ? "text-red-400 border-red-500/30 bg-red-500/10" :
+                                  "text-white"
+                                )}
+                              >
+                                {testStatus[selectedProvider.id] === 'loading' ? 'Testing' : 'Test'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
+                      
+                      <p className="text-[9px] text-[var(--app-text-muted)] ml-1 flex items-center gap-1 -mt-4">
+                        <ShieldCheck size={10} /> Keys are stored locally in your browser's LocalStorage.
+                      </p>
                     </section>
 
                     {/* Models Section - Three Columns */}
@@ -637,12 +673,6 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                 <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
                                   {type === 'text' ? 'Text / Vision' : type === 'image' ? 'Image' : 'Video'}
                                 </span>
-                                <button 
-                                  onClick={() => handleAddModel(selectedProvider.id, type)}
-                                  className="p-1 hover:bg-white/10 rounded-md text-[var(--brand-red)] transition-all"
-                                >
-                                  <Plus size={12} />
-                                </button>
                               </div>
 
                               <DndContext
@@ -668,9 +698,21 @@ export const ModelsModal = ({ isOpen, onClose }: ModelsModalProps) => {
                                         />
                                       );
                                     })}
+                                    
+                                    {/* Ghost Card: Add Model Button */}
+                                    <button
+                                      onClick={() => handleAddModel(selectedProvider.id, type)}
+                                      className="w-full h-[54px] border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] hover:border-[var(--brand-red)]/30 transition-all group/ghost flex items-center justify-center gap-2.5"
+                                    >
+                                      <Plus size={12} className="text-white/10 group-hover/ghost:text-[var(--brand-red)] transition-all" />
+                                      <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/10 group-hover/ghost:text-white/40 transition-all">
+                                        Add {type === 'text' ? 'Text' : type === 'image' ? 'Image' : 'Video'} Model
+                                      </span>
+                                    </button>
+
                                     {typeModels.length === 0 && (
-                                      <div className="py-8 border border-dashed border-white/5 rounded-xl flex items-center justify-center">
-                                        <span className="text-[8px] uppercase tracking-widest text-white/10">No Models</span>
+                                      <div className="py-4 flex items-center justify-center">
+                                        <span className="text-[8px] uppercase tracking-widest text-white/5 italic">No models configured</span>
                                       </div>
                                     )}
                                   </div>

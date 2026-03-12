@@ -17,6 +17,12 @@
   --hud-red: #991b1b;
   --hud-red-glow: rgba(220, 38, 38, 0.6);
   --brand-red: #dc2626;
+
+  @keyframes pulse-subtle {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(0.95); }
+  }
+  --animate-pulse-subtle: pulse-subtle 3s ease-in-out infinite;
 }
 
 @layer base {
@@ -27,6 +33,17 @@
 
   body {
     @apply bg-[var(--app-bg)] text-[var(--app-text)] font-sans antialiased;
+  }
+
+  /* Prevent text selection on UI elements */
+  header, 
+  footer, 
+  .glass-panel:not(.react-flow__node),
+  .hud-border:not(.react-flow__node),
+  .react-flow__controls,
+  .react-flow__minimap,
+  .react-flow__panel {
+    user-select: none;
   }
 
   /* Custom Scrollbar */
@@ -93,14 +110,25 @@
   scrollbar-width: none;
 }
 
-.mode-pan .react-flow__pane {
+.mode-pan .react-flow__pane,
+.mode-pan .react-flow__node {
   cursor: grab !important;
 }
-.mode-pan .react-flow__pane:active {
+.mode-pan .react-flow__pane:active,
+.mode-pan .react-flow__node:active {
   cursor: grabbing !important;
 }
 .mode-selection .react-flow__pane {
   cursor: default !important;
+}
+.mode-selection .react-flow__node {
+  cursor: default !important;
+}
+.mode-selection .react-flow__node.selected {
+  cursor: grab !important;
+}
+.mode-selection .react-flow__node.dragging {
+  cursor: grabbing !important;
 }
 .mode-recognition .react-flow__pane {
   cursor: crosshair !important;
@@ -112,21 +140,21 @@
 
 /* Nodes Selection Box (The dashed box around multiple selected nodes) */
 .react-flow__nodesselection-rect {
-  pointer-events: none !important; /* 默认不捕获，防止挡住节点 */
+  pointer-events: none !important; /* Default no capture to prevent blocking nodes */
   border: 1px dashed #3b82f6 !important;
   background: rgba(59, 130, 246, 0.05) !important;
   box-shadow: none !important;
   outline: none !important;
 }
 
-/* 仅在活跃且有尺寸时开启交互 */
+/* Enable interaction only when active and has dimensions */
 .react-flow__nodesselection-rect[style*="width"]:not([style*="width: 0px"]):not([style*="width:0px"]) {
   pointer-events: all !important;
   display: block !important;
   z-index: 1000 !important;
 }
 
-/* 核心：当宽高为 0 时，强制物理消失，防止渲染成一个点，并移除交互干扰 */
+/* Core: When width/height is 0, force physical disappearance to prevent rendering as a dot and remove interaction interference */
 .react-flow__nodesselection-rect[style*="width: 0px"],
 .react-flow__nodesselection-rect[style*="height: 0px"],
 .react-flow__nodesselection-rect[style*="width:0px"],
@@ -145,7 +173,7 @@
   pointer-events: none !important;
 }
 
-/* 针对所有 Handle 的强制透明，抹除伪元素 */
+/* Force transparency for all Handles, erase pseudo-elements */
 [class*="react-flow__handle"] {
   background: transparent !important;
   border: none !important;
@@ -159,37 +187,44 @@
   display: none !important;
 }
 
-/* 即使在连接状态下也要保持视觉透明 */
+/* Maintain visual transparency even in connecting state */
 [class*="react-flow__handle"].connectable,
 [class*="react-flow__handle"].connecting,
 [class*="react-flow__handle"].valid {
   background: transparent !important;
   opacity: 0 !important;
-  border: none !important;
 }
 
 .react-flow__handle-connecting,
-.react-flow__handle-valid,
-.connectionindicator {
+.react-flow__handle-valid {
   opacity: 0 !important;
-  display: none !important;
 }
 
-/* 彻底抹除所有连接相关的 SVG 容器，直到真正需要连线为止 */
+/* Completely erase all connection-related SVG containers until connection is actually needed */
 .react-flow__connectionline,
 .react-flow__connection-path,
 .react-flow__connection {
-  stroke-width: 0 !important;
-  fill: none !important;
-  pointer-events: none !important;
-  display: none !important;
+  stroke-width: 2px;
+  fill: none;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
-/* 只有当连接状态真正激活时（即用户真的在拉线），才显示出来 */
+/* Only show when connection state is truly active (i.e., user is actually pulling a line) */
+.react-flow__connectionline {
+  z-index: 100000 !important;
+}
+
+.react-flow__connectionline-path,
 .connection-active .react-flow__connection-path,
 .connection-active .custom-connection-path {
   display: block !important;
+  stroke: #3b82f6 !important;
   stroke-width: 3px !important;
+  stroke-dasharray: 5, 5 !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
 /* React Flow Customizations */

@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, memo, useState, useMemo } from 'react';
 import { NodeProps, useConnection, NodeResizer, useReactFlow } from '@xyflow/react';
-import { useTapStore, TapNode, UploadedImage } from './store';
+import { useTapStore, TapNode, UploadedImage, Pin } from './store';
 import { useShallow } from 'zustand/react/shallow';
-import { ImageIcon, ArrowUp, X, Play, Loader2, Eye, Edit3, Terminal, Check, Trash2 } from 'lucide-react';
+import { ImageIcon, ArrowUp, X, Play, Loader2, Eye, Edit3, Terminal, Check, Trash2, Plus, Link as LinkIcon, CornerDownRight } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
 import { EditableTitle } from './components/EditableTitle';
 import { aiService } from './services/aiService';
@@ -21,7 +21,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   
-  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode } = useTapStore(useShallow((state) => ({
+  const { updateNodeData, addUploadedImage, removeUploadedImage, nodes, removeHistoryItem, selectHistoryItem, isCtrlPressed, addPin, updatePin, removePin, rememberPinTargetChoice, addNode, onConnect, setEdges, edges, isRecognitionMode, pinTargetNodeId, addPinWithTarget } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
     addUploadedImage: state.addUploadedImage,
     removeUploadedImage: state.removeUploadedImage,
@@ -37,7 +37,9 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     setEdges: state.setEdges,
     edges: state.edges,
     nodes: state.nodes,
-    isRecognitionMode: state.isRecognitionMode
+    isRecognitionMode: state.isRecognitionMode,
+    pinTargetNodeId: state.pinTargetNodeId,
+    addPinWithTarget: state.addPinWithTarget
   })));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,6 +71,13 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       if (selectedPinId && (e.key === 'Delete' || e.key === 'Backspace')) {
         removePin(id, selectedPinId);
         setSelectedPinId(null);
+      }
+
+      if (e.key === 'Escape') {
+        const virtualPin = data.pins?.find(p => p.isVirtual);
+        if (virtualPin) {
+          removePin(id, virtualPin.id);
+        }
       }
     };
 
@@ -181,27 +190,26 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
   const currentOutput = previewImageUrl || data.outputs?.image;
   const hasContent = currentOutput || uploadedImages.length > 0;
 
-  const handleImageClick = (e: React.MouseEvent) => {
-    // Deselect current PIN if clicking background
-    if (selectedPinId) {
-      setSelectedPinId(null);
+  const handleImageMouseDown = (e: React.MouseEvent) => {
+    // Only handle left click
+    if (e.button !== 0) return;
+
+    const isCtrl = e.ctrlKey || e.metaKey || isCtrlPressed;
+    if (!isCtrl) {
+      if (selectedPinId) setSelectedPinId(null);
+      return;
     }
 
-    if (!isCtrlPressed) return;
-    
-    // If no content, we can still click to create a new node, but we can't "pin" an actual object
-    // However, for UX consistency, we'll allow it.
-    
-    // Only allow PINs on the main image (first in history or uploaded)
-    const isMainImage = !previewImageUrl || (history.length > 0 && previewImageUrl === history[0].url);
-    if (!isMainImage && hasContent) return;
-    
-    // Stop propagation to prevent node selection/dragging if we are adding a PIN
-    // But we manually select the node to ensure it's ready for Ctrl+C
+    // CRITICAL: Stop propagation to prevent React Flow from starting a selection box or drag
     e.stopPropagation();
-    if (!selected) {
-      setNodes(nds => nds.map(n => n.id === id ? { ...n, selected: true } : { ...n, selected: false }));
-    }
+    e.preventDefault();
+
+    // If no content, don't allow PINs
+    if (!hasContent) return;
+
+    // Only allow PINs on the main image
+    const isMainImage = !previewImageUrl || (history.length > 0 && previewImageUrl === history[0].url);
+    if (!isMainImage) return;
     
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
@@ -210,47 +218,20 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     const pinId = `pin-${Date.now()}`;
     const pinLabel = (data.pins?.length || 0) + 1;
     
-    // Logic for target node selection
-    // CRITICAL: We explicitly exclude the current node (id !== id) because PINs 
-    // are spatial outputs of the source, and should only be used as inputs for 
-    // downstream/target nodes. They never belong in the source node's own prompt.
-    const targetNode = nodes.find(n => n.selected && n.id !== id);
+    // Logic for target node selection:
+    const targetNode = nodes.find(n => n.id === pinTargetNodeId) || nodes.find(n => n.selected && n.id !== id);
     
     const xPos = props.positionAbsoluteX;
     const yPos = props.positionAbsoluteY;
 
     if (targetNode) {
-      // Insert into target node
-      const mentionText = `[@ Pin_${pinLabel} (${data.shortId})]`;
-      
-      // Smart Substitution: Remove parent image mention if it exists
-      // The parent image mention looks like [@ IMG_... (SHORT_ID)]
-      const parentMentionRegex = new RegExp(`\\[@ IMG_[^\\]]*? \\(${data.shortId}\\)\\]`, 'g');
-      let newPrompt = targetNode.data.prompt.replace(parentMentionRegex, '').trim();
-      
-      newPrompt = newPrompt 
-        ? `${newPrompt} ${mentionText}` 
-        : mentionText;
-      
-      updateNodeData(targetNode.id, { prompt: newPrompt });
-      
-      // Add Pin to current node
-      addPin(id, { id: pinId, x, y });
-      
-      // Create connection
-      onConnect({
-        source: id,
-        target: targetNode.id,
-        sourceHandle: 'output-image',
-        targetHandle: 'input-main',
-        data: { pinId }
-      } as any);
+      // Use atomic operation
+      addPinWithTarget(id, { id: pinId, x, y }, targetNode.id);
     } else if (rememberPinTargetChoice) {
       // Auto-create new node to the right
       const newNodeId = `node-${Date.now()}`;
       const spacing = 400;
       const newPos = { x: xPos + spacing, y: yPos };
-      
       const mentionText = `[@ Pin_${pinLabel} (${data.shortId})]`;
       
       addNode({
@@ -268,9 +249,6 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         }
       });
 
-      // Select the new node
-      setNodes(nds => nds.map(n => ({ ...n, selected: n.id === newNodeId })));
-
       // Add Pin to current node
       addPin(id, { id: pinId, x, y });
 
@@ -283,13 +261,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         data: { pinId }
       } as any);
     } else {
-      // Add Pin immediately so it's visible while modal is open
-      addPin(id, { id: pinId, x, y });
-      
-      // Show modal (we'll handle this via a global event or state)
-      window.dispatchEvent(new CustomEvent('show-pin-modal', { 
-        detail: { nodeId: id, x, y, pinLabel, shortId: data.shortId, xPos, yPos, pinId } 
-      }));
+      // Create VIRTUAL Pin immediately
+      addPin(id, { id: pinId, x, y, isVirtual: true });
     }
   };
 
@@ -322,8 +295,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       initial={{ scale: 0.9, opacity: 0 }}
       animate={{ 
         scale: 1, 
-        opacity: 1,
-        boxShadow: (isCtrlPressed && isHovered) ? '0 0 20px rgba(239, 68, 68, 0.4)' : 'none'
+        opacity: 1
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -335,8 +307,6 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         "w-full h-full flex flex-col glass-panel rounded-2xl relative z-10 transition-all duration-300",
         selected && "node-selected ring-2 ring-[var(--brand-red)] shadow-2xl shadow-red-900/20",
         data.isLoading && "animate-pulse ring-1 ring-blue-500/50",
-        isCtrlPressed && "ring-2 ring-red-500/30",
-        isCtrlPressed && isHovered && "ring-red-500 animate-pulse",
         data.isCloning && "border-dashed border-2 border-[var(--brand-red)]/60"
       )}>
       <NodeResizer 
@@ -402,7 +372,16 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       <div className="p-3 flex-1 min-h-0 flex flex-col gap-3">
         <div 
           ref={imageContainerRef}
-          onClick={handleImageClick}
+          onMouseDownCapture={handleImageMouseDown}
+          onClick={(e) => {
+            // CRITICAL: If Ctrl is pressed, we are in PIN mode. 
+            // We MUST stop the click event from bubbling up to the node wrapper,
+            // otherwise React Flow will treat this as a selection click and deselect our target node.
+            if (e.ctrlKey || e.metaKey || isCtrlPressed) {
+              e.stopPropagation();
+              e.preventDefault();
+            }
+          }}
           onDragOver={onLocalDragOver}
           onDragLeave={onLocalDragLeave}
           onDrop={onLocalDrop}
@@ -423,10 +402,29 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
               <span className="text-[9px] font-bold text-white uppercase tracking-widest bg-black/60 px-2 py-1 rounded border border-white/10">Drop to Replace</span>
             </div>
           )}
-          {isCtrlPressed && isHovered && (
-            <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center">
-              <div className="bg-white/10 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white/70 font-mono uppercase tracking-tighter border border-white/10">
-                PIN Mode
+
+          {/* Pin Action HUD (Contextual Overlay) */}
+          <AnimatePresence>
+            {data.pins?.filter(p => p.isVirtual).map((vPin) => (
+              <PinActionPanel 
+                key={vPin.id}
+                nodeId={id}
+                pin={vPin}
+                shortId={data.shortId || ''}
+                xPos={props.positionAbsoluteX}
+                yPos={props.positionAbsoluteY}
+                pinLabel={(data.pins?.indexOf(vPin) || 0) + 1}
+              />
+            ))}
+          </AnimatePresence>
+
+          {isCtrlPressed && isHovered && hasContent && (!previewImageUrl || (history.length > 0 && previewImageUrl === history[0].url)) && (
+            <div className="absolute inset-0 z-50 pointer-events-none">
+              <div className="absolute inset-1 border-2 border-dashed border-white/40 rounded-lg" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="bg-white/10 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white/70 font-mono uppercase tracking-tighter border border-white/10">
+                  PIN Mode
+                </div>
               </div>
             </div>
           )}
@@ -453,7 +451,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
             <div
               key={pin.id}
               className={cn(
-                "absolute z-[100] -translate-x-1/2 -translate-y-1/2 group/pin nodrag cursor-crosshair pointer-events-auto"
+                "absolute z-[100] -translate-x-1/2 -translate-y-1/2 group/pin nodrag cursor-crosshair pointer-events-auto",
+                pin.isVirtual && "animate-pulse"
               )}
               style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
               onMouseEnter={() => {
@@ -478,11 +477,15 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
             >
               <div className={cn(
                 "w-6 h-6 rounded-full border-[1.5px] shadow-[0_0_4px_rgba(0,0,0,0.8)] flex items-center justify-center text-white text-[10px] font-bold select-none transition-all relative",
-                selectedPinId === pin.id 
-                  ? "bg-yellow-500 border-white scale-110 ring-2 ring-yellow-500/50" 
-                  : "bg-[#ef4444] border-white hover:scale-110"
+                pin.isVirtual 
+                  ? "bg-white/20 border-white/40 scale-125 ring-4 ring-white/10"
+                  : selectedPinId === pin.id 
+                    ? "bg-yellow-500 border-white scale-110 ring-2 ring-yellow-500/50" 
+                    : "bg-[#ef4444] border-white hover:scale-110"
               )}>
-                {pin.isRecognizing ? (
+                {pin.isVirtual ? (
+                  <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+                ) : pin.isRecognizing ? (
                   <Loader2 size={12} className="animate-spin text-white" />
                 ) : (
                   index + 1
@@ -662,8 +665,11 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       </div>
     </div>
 
+      {/* Floating Control Panel */}
+      <NodePromptInput node={props as any} selected={selected} isPinned={hasPins} />
+
       {/* Ports */}
-      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[100] pointer-events-auto">
+      <div className="absolute -right-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticPort 
           type="image" 
           id="output-image" 
@@ -673,13 +679,98 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         />
       </div>
       
-      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[100] pointer-events-auto">
+      <div className="absolute -left-16 top-1/2 -translate-y-1/2 w-16 flex flex-col z-[200] pointer-events-auto">
         <MagneticInput isTargetOfConnection={isTargetOfConnection} dragging={dragging} />
       </div>
-
-      {/* Floating Control Panel */}
-      <NodePromptInput node={props as any} selected={selected} isPinned={hasPins} />
     </motion.div>
   );
 });
+
+// Contextual Panel Component
+const PinActionPanel = ({ nodeId, pin, shortId, xPos, yPos, pinLabel }: { 
+  nodeId: string, 
+  pin: Pin, 
+  shortId: string, 
+  xPos: number, 
+  yPos: number, 
+  pinLabel: number 
+}) => {
+  const { addNode, onConnect, removePin, nodes, updatePin, addPinWithTarget, createLinkedNode } = useTapStore();
+  const { setNodes } = useReactFlow();
+
+  // Find if any other node is selected
+  const selectedTargetNode = nodes.find(n => n.selected && n.id !== nodeId);
+
+  const handleCancel = () => {
+    removePin(nodeId, pin.id);
+  };
+
+  const handleCreateNew = () => {
+    const spacing = 400;
+    const newPos = { x: xPos + spacing, y: yPos };
+    createLinkedNode(nodeId, pin, pinLabel, newPos);
+  };
+
+  const handleLinkExisting = () => {
+    if (!selectedTargetNode) return;
+    
+    // Remove the virtual pin first (addPinWithTarget will add a real one)
+    removePin(nodeId, pin.id);
+    
+    // Use atomic operation to add pin and link
+    addPinWithTarget(nodeId, { id: pin.id, x: pin.x, y: pin.y }, selectedTargetNode.id);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -10, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -10, scale: 0.95 }}
+      className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 p-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-full shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-[200] pointer-events-auto nodrag"
+    >
+      {/* Label */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-r border-white/5">
+        <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+        <span className="text-[10px] font-bold uppercase tracking-widest text-white/70">Pin #{pinLabel}</span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 px-1">
+        <button
+          onClick={handleCreateNew}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full hover:bg-white/10 transition-all group"
+          title="Create New Node"
+        >
+          <Plus size={12} className="text-blue-400 group-hover:text-white" />
+          <span className="text-[10px] font-bold text-white/60 group-hover:text-white">New</span>
+        </button>
+
+        <button
+          onClick={handleLinkExisting}
+          disabled={!selectedTargetNode}
+          className={cn(
+            "flex items-center gap-2 px-3 py-1.5 rounded-full transition-all group",
+            selectedTargetNode 
+              ? "hover:bg-white/10 cursor-pointer" 
+              : "opacity-20 cursor-not-allowed"
+          )}
+          title={selectedTargetNode ? `Link to ${selectedTargetNode.data.shortId}` : "Select another node to link"}
+        >
+          <LinkIcon size={12} className={cn(selectedTargetNode ? "text-emerald-400 group-hover:text-white" : "text-white/40")} />
+          <span className="text-[10px] font-bold text-white/60 group-hover:text-white">
+            {selectedTargetNode ? `Link (${selectedTargetNode.data.shortId})` : "Link"}
+          </span>
+        </button>
+      </div>
+
+      {/* Close */}
+      <button 
+        onClick={handleCancel}
+        className="ml-1 w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-white/40 hover:text-white transition-all"
+      >
+        <X size={14} />
+      </button>
+    </motion.div>
+  );
+};
 

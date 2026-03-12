@@ -97,7 +97,6 @@ const edgeTypes = {
   default: PinEdge,
 };
 
-import { PinTargetModal } from './components/PinTargetModal';
 import { SettingsModal } from './components/SettingsModal';
 import { Toast } from './components/UI';
 
@@ -113,6 +112,7 @@ function Flow() {
     isDemoMode,
     setDemoMode,
     isRecognitionMode,
+    isSelectionBoxEnabled,
     setNodes,
     setEdges,
     undo,
@@ -125,7 +125,11 @@ function Flow() {
     interactionMode,
     setInteractionMode,
     isShiftPressed,
-    setShiftPressed
+    setShiftPressed,
+    isMultiSelectMasterEnabled,
+    isBoxSelectionEnabled,
+    isShiftClickSelectionEnabled,
+    isSelectionHelperVisible
   } = useTapStore();
 
   const handleResetApp = useCallback(() => {
@@ -142,6 +146,7 @@ function Flow() {
     zoomOut,
     fitView,
     zoomTo,
+    setViewport,
     getViewport
   } = useReactFlow();
   const store = useStoreApi();
@@ -250,21 +255,29 @@ function Flow() {
     }
   }, [screenToFlowPosition, addNode]);
 
-  const smoothZoom = useCallback((factor: number) => {
-    const { zoom } = getViewport();
+  const smoothZoom = useCallback((factor: number, center?: { x: number, y: number }) => {
+    const { x, y, zoom } = getViewport();
     
     // If no active target, start from current zoom
     if (targetZoomRef.current === null) {
       targetZoomRef.current = zoom;
     }
     
-    // Accumulate target
     targetZoomRef.current *= factor;
     
     // Clamp zoom levels
     targetZoomRef.current = Math.min(Math.max(targetZoomRef.current, 0.1), 10);
+    const newZoom = targetZoomRef.current;
 
-    zoomTo(targetZoomRef.current, { duration: 300 });
+    if (center) {
+      // Zoom towards center (screen coordinates)
+      // Formula: new_viewport_pos = mouse_pos - (mouse_pos - old_viewport_pos) * (new_zoom / old_zoom)
+      const newX = center.x - (center.x - x) * (newZoom / zoom);
+      const newY = center.y - (center.y - y) * (newZoom / zoom);
+      setViewport({ x: newX, y: newY, zoom: newZoom }, { duration: 300 });
+    } else {
+      zoomTo(newZoom, { duration: 300 });
+    }
 
     // Clear existing timeout
     if (zoomTimeoutRef.current) {
@@ -388,8 +401,32 @@ function Flow() {
     });
   }, [screenToFlowPosition, addNode]);
 
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
   // Global listeners for keys, mouse position, and paste
   useEffect(() => {
+    const container = containerRef.current;
+    
+    const handleWheel = (e: WheelEvent) => {
+      // Always prevent default to stop browser zoom and React Flow's default zoom
+      e.preventDefault();
+      
+      // Sensitivity factor
+      const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
+      
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl + Wheel: Zoom centered on mouse pointer
+        smoothZoom(factor, { x: e.clientX, y: e.clientY });
+      } else {
+        // Normal Wheel: Zoom centered on canvas (viewport) center
+        smoothZoom(factor);
+      }
+    };
+
+    if (container) {
+      container.addEventListener('wheel', handleWheel, { passive: false });
+    }
+
     const handleMouseMove = (e: MouseEvent) => {
       mousePositionRef.current = { x: e.clientX, y: e.clientY };
     };
@@ -405,10 +442,25 @@ function Flow() {
 
       if (e.key === ' ' && !isInput) {
         e.preventDefault();
-        setIsSpacePressed(true);
+        if (e.repeat) return;
+
+        if (interactionMode === 'pan') {
+          // If in Hand mode, tapping Space switches to Arrow mode permanently
+          setInteractionMode('selection');
+          setIsSpacePressed(false);
+        } else {
+          // If in Arrow mode, holding Space enables temporary Pan mode
+          setIsSpacePressed(true);
+        }
       }
 
       if (isCtrl && !isInput) {
+        // Block Ctrl+A if multi-select master is disabled
+        if ((e.key === 'a' || e.key === 'A') && !isMultiSelectMasterEnabled) {
+          e.preventDefault();
+          return;
+        }
+
         const currentNodes = useTapStore.getState().nodes;
         const clipboard = useTapStore.getState().clipboard;
 
@@ -417,7 +469,7 @@ function Flow() {
           if (selected.length > 0) {
             e.preventDefault();
             copyNodes(selected);
-            setToast({ message: `已复制 ${selected.length} 个节点`, type: 'info' });
+            setToast({ message: `Copied ${selected.length} nodes`, type: 'info' });
           }
         }
         if (e.key === 'x' || e.key === 'X') {
@@ -425,7 +477,7 @@ function Flow() {
           if (selected.length > 0) {
             e.preventDefault();
             cutNodes(selected);
-            setToast({ message: `已剪切 ${selected.length} 个节点`, type: 'info' });
+            setToast({ message: `Cut ${selected.length} nodes`, type: 'info' });
           }
         }
         if (e.key === 'z') {
@@ -468,13 +520,16 @@ function Flow() {
     window.addEventListener('blur', handleBlur);
 
     return () => {
+      if (container) {
+        container.removeEventListener('wheel', handleWheel);
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [onPaste]);
+  }, [onPaste, smoothZoom]);
 
   const handleAddNode = useCallback((type: NodeType, position?: { x: number; y: number }, sourceHandle?: { nodeId: string; handleId: string | null; type: string }) => {
     const id = `node-${Date.now()}`;
@@ -557,6 +612,12 @@ function Flow() {
     // If the menu was opened less than 200ms ago, don't close it.
     // This prevents the click event that follows mouseup from closing the menu immediately.
     if (Date.now() - menuLastOpenedAt.current < 200) return;
+
+    // TEXT SELECTION GUARD: If user is selecting text, don't deselect nodes
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+      return;
+    }
     
     setMenu(null);
     setPendingConnection(null);
@@ -572,9 +633,6 @@ function Flow() {
   }, [setMenu, setNodes, nodes, store]);
 
   const onConnectStart = useCallback((event: any, { nodeId, handleId, handleType }: any) => {
-    // Don't start connection if Shift is pressed (user is likely trying to selection)
-    if (isShiftPressed) return;
-
     // Only handle source handles (outputs)
     if (handleType === 'source') {
       setPendingConnection({ nodeId, handleId, type: handleId || 'text' });
@@ -646,6 +704,15 @@ function Flow() {
 
   return (
     <div className="w-full h-screen bg-[var(--app-bg)] text-[var(--app-text)] font-sans overflow-hidden flex flex-col">
+      {/* Selection Helper Visibility Control */}
+      <style>
+        {`
+          .react-flow__nodesselection {
+            display: ${isSelectionHelperVisible && isMultiSelectMasterEnabled ? 'block' : 'none'} !important;
+          }
+        `}
+      </style>
+
       {/* Top Navigation Bar */}
       <header className="h-14 border-b border-[var(--app-border)] glass-panel flex items-center justify-between px-6 z-50">
         <div className="flex items-center gap-6">
@@ -707,6 +774,7 @@ function Flow() {
 
       {/* Main Canvas Area */}
       <main 
+        ref={containerRef}
         className={cn("flex-1 relative", isShiftPressed && "shift-pressed", isConnecting && "connection-active")}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -733,17 +801,37 @@ function Flow() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           connectionLineComponent={ConnectionLine}
-          deleteKeyCode={['Backspace', 'Delete']}
-          selectionKeyCode="Shift"
-          multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
-          panOnDrag={[2]}
-          selectionOnDrag={true}
+          deleteKeyCode={['Delete']}
+          selectionKeyCode={isMultiSelectMasterEnabled && isBoxSelectionEnabled ? 'Shift' : null}
+          multiSelectionKeyCode={isMultiSelectMasterEnabled && isShiftClickSelectionEnabled ? 'Shift' : null}
+          panOnDrag={interactionMode === 'pan' || isSpacePressed ? [0, 1, 2] : [1, 2]}
+          selectionOnDrag={isMultiSelectMasterEnabled && isBoxSelectionEnabled && interactionMode === 'selection' && !isSpacePressed}
+          panOnScroll={false}
+          zoomOnScroll={false}
+          zoomOnPinch={false}
+          preventScrolling={true}
           selectionMode={SelectionMode.Partial}
+          nodesDraggable={interactionMode === 'selection' && !isSpacePressed}
+          nodesConnectable={interactionMode === 'selection' && !isSpacePressed}
+          elementsSelectable={interactionMode === 'selection' && !isSpacePressed}
           className={cn(
             interactionMode === 'pan' || isSpacePressed ? "mode-pan" : "mode-selection",
             isRecognitionMode && "mode-recognition"
           )}
           onNodeClick={(event, node) => {
+            // If Master or Shift-Click is disabled, don't allow multi-selection via click
+            if (!isMultiSelectMasterEnabled || !isShiftClickSelectionEnabled) {
+              // Force single selection
+              const otherSelected = nodes.filter(n => n.selected && n.id !== node.id);
+              if (otherSelected.length > 0) {
+                onNodesChange([
+                  ...otherSelected.map(n => ({ id: n.id, type: 'select' as const, selected: false })),
+                  { id: node.id, type: 'select', selected: true }
+                ]);
+              }
+              return;
+            }
+
             // If Shift/Ctrl/Meta is pressed, let React Flow handle multi-selection
             if (event.shiftKey || event.ctrlKey || event.metaKey) return;
 
@@ -789,17 +877,6 @@ function Flow() {
           snapToGrid={isSnapToGrid}
           snapGrid={[15, 15]}
           connectionRadius={20}
-          zoomOnScroll={false}
-          onPaneScroll={(event) => {
-            if (event) {
-              const delta = (event as any).deltaY;
-              if (delta > 0) {
-                smoothZoom(1 / 1.2);
-              } else {
-                smoothZoom(1.2);
-              }
-            }
-          }}
           connectionLineType={ConnectionLineType.Bezier}
           connectionLineStyle={{ 
             stroke: '#3b82f6', 
@@ -833,21 +910,21 @@ function Flow() {
         className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
       >
         <Type size={14} className="text-emerald-400" />
-        <span>文字节点</span>
+        <span>Text Node</span>
       </button>
       <button 
         onClick={() => handleAddNode('image-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
         className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
       >
         <ImageIcon size={14} className="text-blue-400" />
-        <span>图片节点</span>
+        <span>Image Node</span>
       </button>
       <button 
         onClick={() => handleAddNode('video-node', screenToFlowPosition({ x: menu.x, y: menu.y }), menu.sourceHandle)}
         className="w-full px-4 py-2.5 text-left text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
       >
         <Video size={14} className="text-purple-400" />
-        <span>视频节点</span>
+        <span>Video Node</span>
       </button>
     </div>
   )}
@@ -938,7 +1015,7 @@ function Flow() {
                   onClick={() => setInteractionMode('selection')}
                   className={cn(
                     "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
-                    interactionMode === 'selection' ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
+                    (interactionMode === 'selection' && !isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
                   )}
                   title="Selection Tool (V)"
                 >
@@ -948,7 +1025,7 @@ function Flow() {
                   onClick={() => setInteractionMode('pan')}
                   className={cn(
                     "w-8 h-8 flex items-center justify-center rounded-lg transition-all",
-                    interactionMode === 'pan' ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
+                    (interactionMode === 'pan' || isSpacePressed) ? "bg-[var(--app-border)] text-white shadow-inner" : "text-[var(--app-text-muted)] hover:text-white hover:bg-white/5"
                   )}
                   title="Pan Tool (H)"
                 >
@@ -1105,7 +1182,6 @@ function Flow() {
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
       />
-      <PinTargetModal />
       
       {/* Toast */}
       <Toast 

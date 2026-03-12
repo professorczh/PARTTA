@@ -51,7 +51,7 @@ export const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: Co
               <div className={`w-4 h-4 rounded border transition-all flex items-center justify-center ${dontShowAgain ? 'bg-[var(--brand-red)] border-[var(--brand-red)]' : 'border-white/20 group-hover:border-white/40'}`}>
                 {dontShowAgain && <Check size={10} className="text-white" />}
               </div>
-              <span className="text-[10px] text-white/60 uppercase font-bold tracking-wider group-hover:text-white/80 transition-colors">不再提示</span>
+              <span className="text-[10px] text-white/60 uppercase font-bold tracking-wider group-hover:text-white/80 transition-colors">Don't show again</span>
             </div>
 
             <div className="flex gap-3">
@@ -59,13 +59,13 @@ export const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: Co
                 onClick={onCancel}
                 className="flex-1 px-4 py-3 rounded-xl border border-white/10 hover:bg-white/5 transition-all text-xs font-bold uppercase tracking-widest text-white/80"
               >
-                取消
+                Cancel
               </button>
               <button
                 onClick={() => onConfirm(dontShowAgain)}
                 className="flex-1 px-4 py-3 rounded-xl bg-[var(--brand-red)] text-white hover:opacity-90 transition-all text-xs font-bold uppercase tracking-widest hud-border shadow-lg shadow-red-900/20"
               >
-                确认删除
+                Confirm
               </button>
             </div>
           </div>
