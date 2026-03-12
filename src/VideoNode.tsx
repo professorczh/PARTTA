@@ -21,7 +21,6 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
   const { id, data, selected, dragging } = props;
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
-  const [startTime, setStartTime] = React.useState<number | undefined>(undefined);
   
   const { updateNodeData, providers, globalDefaults, isDemoMode, edges } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
@@ -51,8 +50,20 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
     }
 
     const runStartTime = Date.now();
-    setStartTime(runStartTime);
-    updateNodeData(id, { isLoading: true });
+    
+    // Capture fixed metadata at the start
+    const modelName = currentModel.model.name;
+    const initialResolution = data.config?.resolution || data.metadata?.resolution || '720p';
+    
+    updateNodeData(id, { 
+      isLoading: true,
+      metadata: {
+        ...data.metadata,
+        modelName,
+        resolution: initialResolution,
+        startTime: runStartTime
+      }
+    });
 
     try {
       const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt, nodes, edges, id);
@@ -65,12 +76,17 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
         isDemoMode
       });
 
-      const duration = (Date.now() - runStartTime) / 1000;
+      const duration = response.metadata?.duration || (Date.now() - runStartTime) / 1000;
 
       if (response.error) {
         alert(`Error: ${response.error}`);
-        updateNodeData(id, { isLoading: false });
-        setStartTime(undefined);
+        updateNodeData(id, { 
+          isLoading: false,
+          metadata: {
+            ...data.metadata,
+            startTime: undefined
+          }
+        });
         return;
       }
 
@@ -80,6 +96,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
       newOutputs.video = response.imageUrl; // Mock video
       newVersions.video++;
 
+      // Final update: ensure ALL metadata is preserved and duration is added
       updateNodeData(id, { 
         isLoading: false, 
         outputs: newOutputs,
@@ -87,14 +104,20 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
         metadata: {
           ...data.metadata,
           duration,
-          modelName: currentModel.model.name
+          modelName: response.metadata?.modelName || modelName,
+          resolution: response.metadata?.resolution || initialResolution,
+          startTime: undefined
         }
       });
-      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
-      updateNodeData(id, { isLoading: false });
-      setStartTime(undefined);
+      updateNodeData(id, { 
+        isLoading: false,
+        metadata: {
+          ...data.metadata,
+          startTime: undefined
+        }
+      });
     }
   };
 
@@ -154,7 +177,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
         </div>
       </div>
 
-      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
+      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} />
     </div>
 
       {/* Built-in Input (Selected Only) */}

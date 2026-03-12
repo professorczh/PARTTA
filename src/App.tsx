@@ -59,7 +59,7 @@ const ConnectionLine = ({ fromX, fromY, toX, toY, fromHandle }: ConnectionLineCo
 import { motion, AnimatePresence } from 'motion/react';
 import '@xyflow/react/dist/style.css';
 
-import { useTapStore, NodeType, TapNode } from './store';
+import { useTapStore, NodeType, TapNode, ProviderConfig } from './store';
 import { cn } from './lib/utils';
 import { TextNode } from './TextNode';
 import { ImageNode } from './ImageNode';
@@ -130,8 +130,40 @@ function Flow() {
     isMultiSelectMasterEnabled,
     isBoxSelectionEnabled,
     isShiftClickSelectionEnabled,
-    isSelectionHelperVisible
+    isSelectionHelperVisible,
+    providers
   } = useTapStore();
+
+  // Dynamic Whitelist Registration
+  useEffect(() => {
+    const registerDomains = async () => {
+      const domains = new Set<string>();
+      providers.forEach((p: ProviderConfig) => {
+        if (p.baseUrl) {
+          try {
+            const url = new URL(p.baseUrl);
+            domains.add(url.hostname.toLowerCase());
+          } catch (e) {
+            console.error('Invalid baseUrl for provider:', p.name, p.baseUrl);
+          }
+        }
+      });
+
+      if (domains.size > 0) {
+        try {
+          await fetch('/api/proxy/register-domains', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains: Array.from(domains) })
+          });
+        } catch (e) {
+          console.error('Failed to register domains with proxy:', e);
+        }
+      }
+    };
+
+    registerDomains();
+  }, [providers]);
 
   const handleResetApp = useCallback(() => {
     if (confirm("Are you sure you want to reset the app? This will clear all nodes and settings.")) {

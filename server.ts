@@ -17,9 +17,27 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(cors());
 
+  // Dynamic whitelist for proxy
+  const dynamicAllowedDomains = new Set<string>();
+
   // 2. Explicit API Routes (BEFORE anything else)
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "Express is alive" });
+  });
+
+  app.post("/api/proxy/register-domains", (req, res) => {
+    const { domains } = req.body;
+    if (Array.isArray(domains)) {
+      domains.forEach(domain => {
+        if (typeof domain === 'string' && domain.length > 0) {
+          dynamicAllowedDomains.add(domain.toLowerCase());
+        }
+      });
+      console.log("[PROXY] Registered domains:", Array.from(dynamicAllowedDomains));
+      res.json({ success: true, currentDomains: Array.from(dynamicAllowedDomains) });
+    } else {
+      res.status(400).json({ error: "Invalid domains format" });
+    }
   });
 
   // Use a more specific route handler to ensure it's not caught by SPA fallback
@@ -38,14 +56,18 @@ async function startServer() {
       "12ai.org",
       "anthropic.com",
       "openrouter.ai",
-      "deepseek.com"
+      "deepseek.com",
+      "picsum.photos",
+      "fastly.picsum.photos"
     ];
 
     try {
       const url = new URL(targetUrl);
+      const hostname = url.hostname.toLowerCase();
+      
       const isAllowed = allowedDomains.some(domain => 
-        url.hostname === domain || url.hostname.endsWith("." + domain)
-      );
+        hostname === domain || hostname.endsWith("." + domain)
+      ) || dynamicAllowedDomains.has(hostname) || Array.from(dynamicAllowedDomains).some(domain => hostname.endsWith("." + domain));
 
       if (!isAllowed) {
         return res.status(403).json({ error: "Domain not allowed in proxy" });
@@ -61,16 +83,24 @@ async function startServer() {
       });
 
       const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
+      const isJson = contentType && contentType.includes("application/json");
+
+      if (isJson) {
         const data = await response.json();
         res.status(response.status).json(data);
       } else {
-        const text = await response.text();
-        res.status(response.status).send(text);
+        // Handle binary data or plain text errors
+        const buffer = await response.arrayBuffer();
+        if (contentType) res.setHeader("Content-Type", contentType);
+        res.status(response.status).send(Buffer.from(buffer));
       }
     } catch (error: any) {
       console.error("Proxy Error:", error);
-      res.status(500).json({ error: error.message || "Internal Server Error" });
+      // Ensure we always return JSON on error
+      res.status(500).json({ 
+        error: error.message || "Internal Server Error",
+        details: "An error occurred while proxying the request."
+      });
     }
   };
 

@@ -115,6 +115,7 @@ export interface NodeData extends Record<string, unknown> {
     duration?: number;
     resolution?: string;
     modelName?: string;
+    startTime?: number;
   };
   config?: {
     mask?: string;
@@ -285,10 +286,10 @@ export const useTapStore = create<TapState>()(
       isDemoMode: true, // Default to true as per user's preference for easy demo
       isRecognitionMode: false,
       isMultiSelectMasterEnabled: true,
-      isBoxSelectionEnabled: true,
+      isBoxSelectionEnabled: false,
       isShiftClickSelectionEnabled: true,
       isSelectionHelperVisible: true,
-      isSelectionBoxEnabled: true,
+      isSelectionBoxEnabled: false,
       isCtrlPressed: false,
       isShiftPressed: false,
       isAltPressed: false,
@@ -413,6 +414,7 @@ export const useTapStore = create<TapState>()(
             outputs: node.data.outputs || {},
             outputVersions: node.data.outputVersions || { text: 0, image: 0, video: 0, prompt: 0 },
             activeOutputMode: node.data.activeOutputMode || 'text',
+            metadata: node.data.metadata || {},
             config: {
               ...node.data.config,
               model: node.data.config?.model
@@ -438,7 +440,11 @@ export const useTapStore = create<TapState>()(
             
             const newData = { 
               ...node.data, 
-              ...data
+              ...data,
+              metadata: {
+                ...(node.data.metadata || {}),
+                ...(data.metadata || {})
+              }
             };
 
             // Ensure outputs and outputVersions are initialized

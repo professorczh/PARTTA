@@ -17,6 +17,11 @@ export interface AIServiceResponse {
   imageUrl?: string;
   thoughtSignature?: string;
   error?: string;
+  metadata?: {
+    modelName?: string;
+    resolution?: string;
+    duration?: number;
+  };
 }
 
 export const aiService = {
@@ -109,7 +114,10 @@ export const aiService = {
         })
       });
       
-      if (!response.ok) throw new Error('Proxy request failed');
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Proxy request failed with status ${response.status}`);
+      }
       
       const blob = await response.blob();
       return new Promise((resolve, reject) => {
@@ -137,8 +145,16 @@ export const aiService = {
   },
 
   async callMock(request: AIServiceRequest): Promise<AIServiceResponse> {
-    const { modelId, prompt, aspectRatio } = request;
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
+    const { modelId, prompt, aspectRatio, provider } = request;
+    const startTime = Date.now();
+    
+    // Simulate a quick delay (1.0-1.5 seconds) to show off the timer but keep it snappy
+    const delay = 1000 + Math.random() * 500;
+    await new Promise(resolve => setTimeout(resolve, delay)); 
+    
+    const duration = (Date.now() - startTime) / 1000;
+    const modelConfig = provider.models.find(m => m.id === modelId);
+    const modelName = modelConfig?.name || 'Mock Model';
 
     if (modelId.includes('image') || modelId.includes('video')) {
       let width = 1024;
@@ -150,31 +166,49 @@ export const aiService = {
       else if (aspectRatio === '3:4') { width = 768; height = 1024; }
       else if (aspectRatio === '21:9') { width = 1024; height = 438; }
 
+      const resolution = `${width} x ${height}`;
       const imageUrl = `https://picsum.photos/seed/${Math.random()}/${width}/${height}`;
       const base64Image = await this.urlToBase64(imageUrl);
       
-      return { imageUrl: base64Image };
+      return { 
+        imageUrl: base64Image,
+        metadata: {
+          modelName,
+          resolution,
+          duration
+        }
+      };
     }
 
     return { 
-      text: `[SYSTEM MOCK RESPONSE]\n\nYou said: "${prompt}"\n\nThis is a simulated response. To get real AI results, please configure a provider in the Models settings.` 
+      text: `[SYSTEM MOCK RESPONSE]\n\nYou said: "${prompt}"\n\nThis is a simulated response. To get real AI results, please configure a provider in the Models settings.`,
+      metadata: {
+        modelName,
+        duration
+      }
     };
   },
 
   async callGemini(request: AIServiceRequest): Promise<AIServiceResponse> {
-    const { provider, modelId, prompt, images, aspectRatio, imageSize, thinkingLevel, thoughtSignature } = request;
+    const { provider, modelId, prompt = "", images, aspectRatio, imageSize, thinkingLevel, thoughtSignature } = request;
     
     const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${provider.apiKey}`;
     
-    const parts: any[] = [
-      { text: prompt },
-      ...(images || []).map(img => ({
+    const parts: any[] = [];
+    
+    // Add text part if prompt is not empty, or if we have no images
+    if (prompt.trim() || (images || []).length === 0) {
+      parts.push({ text: prompt || " " }); // Use space if empty to satisfy API
+    }
+
+    if (images && images.length > 0) {
+      parts.push(...images.map(img => ({
         inline_data: {
           mime_type: img.mimeType,
           data: img.data.split(',')[1] || img.data
         }
-      }))
-    ];
+      })));
+    }
 
     // If we have a thought signature from a previous turn, we must include it
     if (thoughtSignature) {
@@ -227,17 +261,33 @@ export const aiService = {
         })
       });
 
-      const responseText = await response.text();
-      let data: any;
-      
-      try {
-        data = JSON.parse(responseText);
-      } catch (e) {
-        console.error("Failed to parse JSON response:", responseText.substring(0, 200));
-        if (responseText.trim().startsWith('{')) {
-          return { error: `Malformed JSON response: ${responseText.substring(0, 100)}` };
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMsg = errorText;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMsg = errorJson.error?.message || errorJson.error || errorText;
+        } catch (e) {
+          // If it's HTML, try to extract a meaningful message
+          if (errorText.includes('<body')) {
+            const match = errorText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+            if (match) errorMsg = match[1].replace(/<[^>]*>?/gm, '').trim().substring(0, 200);
+          }
         }
-        return { error: `Server returned non-JSON response: ${responseText.substring(0, 100)}` };
+        return { error: errorMsg || `Request failed with status ${response.status}` };
+      }
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        return { error: `Expected JSON but received ${contentType || 'unknown'}. This usually means the proxy or API returned an error page. Content: ${text.substring(0, 100)}` };
+      }
+
+      let data: any;
+      try {
+        data = await response.json();
+      } catch (e) {
+        return { error: `Failed to parse JSON response. The response might be malformed.` };
       }
       
       if (data.error) {
@@ -273,7 +323,7 @@ export const aiService = {
   },
 
   async callOpenAICompatible(request: AIServiceRequest): Promise<AIServiceResponse> {
-    const { provider, modelId, prompt, images } = request;
+    const { provider, modelId, prompt = "", images } = request;
     const baseUrl = provider.baseUrl || 'https://api.openai.com/v1';
     const targetUrl = `${baseUrl}/chat/completions`;
 
@@ -312,7 +362,34 @@ export const aiService = {
         })
       });
 
-      const data = await response.json();
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMsg = errorText;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMsg = errorJson.error?.message || errorJson.error || errorText;
+        } catch (e) {
+          // If it's HTML, try to extract a meaningful message
+          if (errorText.includes('<body')) {
+            const match = errorText.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+            if (match) errorMsg = match[1].replace(/<[^>]*>?/gm, '').trim().substring(0, 200);
+          }
+        }
+        return { error: errorMsg || `Request failed with status ${response.status}` };
+      }
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        return { error: `Expected JSON but received ${contentType || 'unknown'}. This usually means the proxy or API returned an error page. Content: ${text.substring(0, 100)}` };
+      }
+
+      let data: any;
+      try {
+        data = await response.json();
+      } catch (e) {
+        return { error: `Failed to parse JSON response. The response might be malformed.` };
+      }
 
       if (data.error) {
         return { error: data.error.message || JSON.stringify(data.error) };

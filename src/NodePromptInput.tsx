@@ -341,7 +341,18 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
   const handleGenerateText = async () => {
     if (!currentModel) return;
     setIsGenerating(true);
-    updateNodeData(node.id, { isLoading: true });
+    
+    const runStartTime = Date.now();
+    const modelName = currentModel.model.name;
+
+    updateNodeData(node.id, { 
+      isLoading: true,
+      metadata: {
+        ...node.data.metadata,
+        modelName,
+        startTime: runStartTime
+      }
+    });
 
     try {
       const resolved = resolvePrompt(prompt, nodes, edges, node.id);
@@ -357,6 +368,8 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
 
       const response = await aiService.generate(request);
       
+      const duration = response.metadata?.duration || (Date.now() - runStartTime) / 1000;
+
       if (response.text) {
         const historyItem: HistoryItem = {
           id: `hist-${Date.now()}`,
@@ -374,17 +387,35 @@ export const NodePromptInput = ({ node, selected, isPinned, onRun, onExpandChang
           selectedHistoryId: historyItem.id,
           isLoading: false,
           isGenerated: true, // Mark as generated to intercept pass-through
-          viewMode: 'prev' // Automatically switch node body to preview
+          viewMode: 'prev', // Automatically switch node body to preview
+          metadata: {
+            ...node.data.metadata,
+            duration,
+            modelName: response.metadata?.modelName || modelName,
+            startTime: undefined
+          }
         });
       } else {
         const errorMsg = response.error || 'Unknown error occurred';
         console.error('Text generation failed:', errorMsg);
         alert(`Generation failed: ${errorMsg}`);
-        updateNodeData(node.id, { isLoading: false });
+        updateNodeData(node.id, { 
+          isLoading: false,
+          metadata: {
+            ...node.data.metadata,
+            startTime: undefined
+          }
+        });
       }
     } catch (error) {
       console.error('Text generation failed:', error);
-      updateNodeData(node.id, { isLoading: false });
+      updateNodeData(node.id, { 
+        isLoading: false,
+        metadata: {
+          ...node.data.metadata,
+          startTime: undefined
+        }
+      });
     } finally {
       setIsGenerating(false);
     }

@@ -25,7 +25,6 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   const [isPromptActive, setIsPromptActive] = useState(false);
-  const [startTime, setStartTime] = useState<number | undefined>(undefined);
   
   const { updateNodeData, nodes, onConnect, edges, setEdges, skipDeleteConfirm, providers, globalDefaults, isDemoMode } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
@@ -166,8 +165,18 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
     }
 
     const runStartTime = Date.now();
-    setStartTime(runStartTime);
-    updateNodeData(id, { isLoading: true });
+    
+    // Capture fixed metadata at the start
+    const modelName = currentModel.model.name;
+    
+    updateNodeData(id, { 
+      isLoading: true,
+      metadata: {
+        ...data.metadata,
+        modelName,
+        startTime: runStartTime
+      }
+    });
 
     try {
       const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt || '', nodes, edges, id);
@@ -182,12 +191,17 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         thoughtSignature: data.thoughtSignature
       });
 
-      const duration = (Date.now() - runStartTime) / 1000;
+      const duration = response.metadata?.duration || (Date.now() - runStartTime) / 1000;
 
       if (response.error) {
         alert(`Error: ${response.error}`);
-        updateNodeData(id, { isLoading: false });
-        setStartTime(undefined);
+        updateNodeData(id, { 
+          isLoading: false,
+          metadata: {
+            ...data.metadata,
+            startTime: undefined
+          }
+        });
         return;
       }
 
@@ -197,6 +211,7 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
       newOutputs.text = response.text;
       newVersions.text++;
 
+      // Final update: ensure ALL metadata is preserved and duration is added
       updateNodeData(id, { 
         isLoading: false, 
         isGenerated: true,
@@ -206,14 +221,19 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         metadata: {
           ...data.metadata,
           duration,
-          modelName: currentModel.model.name
+          modelName: response.metadata?.modelName || modelName,
+          startTime: undefined
         }
       });
-      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
-      updateNodeData(id, { isLoading: false });
-      setStartTime(undefined);
+      updateNodeData(id, { 
+        isLoading: false,
+        metadata: {
+          ...data.metadata,
+          startTime: undefined
+        }
+      });
     }
   };
 
@@ -339,7 +359,7 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
               </div>
               <button
                 onClick={() => updateNodeData(id, { isGenerated: false, outputs: { ...data.outputs, text: undefined } })}
-                className="absolute bottom-0 right-0 p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-all border border-red-500/20"
+                className="absolute bottom-0 right-0 p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-all border border-red-500/20 z-20"
                 title="Delete AI Result"
               >
                 <X size={14} />
@@ -409,9 +429,12 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
             </div>
           )}
         </div>
+        
+        {/* Metadata Bar - Positioned at the outer bottom-right of the result box */}
+        <div className="flex justify-end mt-1 px-1">
+          <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} />
+        </div>
       </div>
-
-      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
     </div>
 
       {/* Floating Control Panel */}

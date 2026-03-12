@@ -54,7 +54,6 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState<number | undefined>(undefined);
 
   // Global listeners for dragging and deletion
   useEffect(() => {
@@ -118,15 +117,20 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     
     // Detect resolution and update metadata if it's the main output
     if (img.naturalWidth && img.naturalHeight && !previewImageUrl) {
-      const resolution = `${img.naturalWidth} x ${img.naturalHeight}`;
-      if (data.metadata?.resolution !== resolution) {
-        updateNodeData(id, { 
-          metadata: { 
-            ...data.metadata, 
-            resolution 
-          } 
-        });
-      }
+      const realRes = `${img.naturalWidth} x ${img.naturalHeight}`;
+      const endTime = Date.now();
+      const startTime = data.metadata?.startTime;
+      const duration = startTime ? (endTime - startTime) / 1000 : undefined;
+
+      updateNodeData(id, { 
+        isLoading: false,
+        metadata: { 
+          ...data.metadata, 
+          resolution: realRes,
+          duration,
+          startTime: undefined
+        } 
+      });
     }
 
     // CRITICAL: If we are just previewing a thumbnail, DON'T adjust the node height.
@@ -324,8 +328,23 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     }
 
     const runStartTime = Date.now();
-    setStartTime(runStartTime);
-    updateNodeData(id, { isLoading: true });
+    
+    // Capture fixed metadata at the start
+    const modelName = currentModel.model.name;
+    const initialResolution = data.config?.aspectRatio && data.config?.imageSize 
+      ? `${data.config.aspectRatio} • ${data.config.imageSize}`
+      : '1:1 • 1K';
+    
+    updateNodeData(id, { 
+      isLoading: true,
+      metadata: {
+        ...data.metadata,
+        modelName,
+        resolution: initialResolution,
+        startTime: runStartTime,
+        duration: undefined // Reset duration while loading
+      }
+    });
 
     try {
       const { prompt: resolvedPrompt, images } = resolvePrompt(data.prompt || '', nodes, edges, id);
@@ -341,12 +360,17 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         thoughtSignature: data.thoughtSignature
       });
 
-      const duration = (Date.now() - runStartTime) / 1000;
+      const duration = response.metadata?.duration || (Date.now() - runStartTime) / 1000;
 
       if (response.error) {
         alert(`Error: ${response.error}`);
-        updateNodeData(id, { isLoading: false });
-        setStartTime(undefined);
+        updateNodeData(id, { 
+          isLoading: false,
+          metadata: {
+            ...data.metadata,
+            startTime: undefined
+          }
+        });
         return;
       }
 
@@ -367,22 +391,28 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         });
       }
 
+      // Update outputs but keep isLoading true until handleImageLoad
       updateNodeData(id, { 
-        isLoading: false, 
         outputs: newOutputs,
         outputVersions: newVersions,
         thoughtSignature: response.thoughtSignature,
         metadata: {
           ...data.metadata,
-          duration,
-          modelName: currentModel.model.name
+          modelName: response.metadata?.modelName || modelName,
+          resolution: response.metadata?.resolution || initialResolution,
+          // Keep startTime for handleImageLoad to calculate final duration
         }
       });
-      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
-      updateNodeData(id, { isLoading: false });
-      setStartTime(undefined);
+      updateNodeData(id, { 
+        isLoading: false,
+        metadata: {
+          ...data.metadata,
+          startTime: undefined,
+          duration: undefined
+        }
+      });
     }
   };
 
@@ -761,9 +791,12 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
             </AnimatePresence>
           </motion.div>
         )}
-      </div>
 
-      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
+        {/* Metadata Bar - Positioned at the outer bottom-right of the content area */}
+        <div className="flex justify-end mt-1 px-1">
+          <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} />
+        </div>
+      </div>
     </div>
 
       {/* Floating Control Panel */}
