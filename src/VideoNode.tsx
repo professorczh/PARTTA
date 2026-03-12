@@ -4,6 +4,7 @@ import { useTapStore, TapNode } from './store';
 import { useShallow } from 'zustand/react/shallow';
 import { Video, Play, Loader2 } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
+import { NodeMetadata } from './components/NodeMetadata';
 import { EditableTitle } from './components/EditableTitle';
 import { aiService } from './services/aiService';
 import { resolvePrompt } from './utils/promptResolver';
@@ -20,6 +21,7 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
   const { id, data, selected, dragging } = props;
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
+  const [startTime, setStartTime] = React.useState<number | undefined>(undefined);
   
   const { updateNodeData, providers, globalDefaults, isDemoMode, edges } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
@@ -48,6 +50,8 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
       return;
     }
 
+    const runStartTime = Date.now();
+    setStartTime(runStartTime);
     updateNodeData(id, { isLoading: true });
 
     try {
@@ -61,9 +65,12 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
         isDemoMode
       });
 
+      const duration = (Date.now() - runStartTime) / 1000;
+
       if (response.error) {
         alert(`Error: ${response.error}`);
         updateNodeData(id, { isLoading: false });
+        setStartTime(undefined);
         return;
       }
 
@@ -76,11 +83,18 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
       updateNodeData(id, { 
         isLoading: false, 
         outputs: newOutputs,
-        outputVersions: newVersions
+        outputVersions: newVersions,
+        metadata: {
+          ...data.metadata,
+          duration,
+          modelName: currentModel.model.name
+        }
       });
+      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
       updateNodeData(id, { isLoading: false });
+      setStartTime(undefined);
     }
   };
 
@@ -139,6 +153,8 @@ export const VideoNode = memo((props: NodeProps<TapNode>) => {
           <Video size={48} className="text-white/10" />
         </div>
       </div>
+
+      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
     </div>
 
       {/* Built-in Input (Selected Only) */}

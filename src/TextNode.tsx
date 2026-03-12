@@ -4,6 +4,7 @@ import { useTapStore, TapNode } from './store';
 import { useShallow } from 'zustand/react/shallow';
 import { Type, Eye, Edit3, Terminal, Check, X, Loader2 } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
+import { NodeMetadata } from './components/NodeMetadata';
 import { EditableTitle } from './components/EditableTitle';
 import { resolvePrompt } from './utils/promptResolver';
 import { aiService } from './services/aiService';
@@ -24,6 +25,7 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
   const connection = useConnection();
   const isTargetOfConnection = connection.inProgress && connection.toNode?.id === id;
   const [isPromptActive, setIsPromptActive] = useState(false);
+  const [startTime, setStartTime] = useState<number | undefined>(undefined);
   
   const { updateNodeData, nodes, onConnect, edges, setEdges, skipDeleteConfirm, providers, globalDefaults, isDemoMode } = useTapStore(useShallow((state) => ({
     updateNodeData: state.updateNodeData,
@@ -163,6 +165,8 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
       return;
     }
 
+    const runStartTime = Date.now();
+    setStartTime(runStartTime);
     updateNodeData(id, { isLoading: true });
 
     try {
@@ -178,9 +182,12 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         thoughtSignature: data.thoughtSignature
       });
 
+      const duration = (Date.now() - runStartTime) / 1000;
+
       if (response.error) {
         alert(`Error: ${response.error}`);
         updateNodeData(id, { isLoading: false });
+        setStartTime(undefined);
         return;
       }
 
@@ -195,11 +202,18 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
         isGenerated: true,
         outputs: newOutputs,
         outputVersions: newVersions,
-        thoughtSignature: response.thoughtSignature
+        thoughtSignature: response.thoughtSignature,
+        metadata: {
+          ...data.metadata,
+          duration,
+          modelName: currentModel.model.name
+        }
       });
+      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
       updateNodeData(id, { isLoading: false });
+      setStartTime(undefined);
     }
   };
 
@@ -396,6 +410,8 @@ export const TextNode = memo((props: NodeProps<TapNode>) => {
           )}
         </div>
       </div>
+
+      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
     </div>
 
       {/* Floating Control Panel */}

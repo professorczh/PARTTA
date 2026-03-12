@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Cpu, Zap, Info, ShieldCheck, Monitor, BrainCircuit, MousePointer2 } from 'lucide-react';
+import { X, Cpu, Zap, Info, ShieldCheck, Monitor, BrainCircuit, MousePointer2, Layout } from 'lucide-react';
 import { useTapStore } from '../store';
 import { cn } from '../lib/utils';
 
@@ -22,7 +22,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     isShiftClickSelectionEnabled,
     setShiftClickSelectionEnabled,
     isSelectionHelperVisible,
-    setSelectionHelperVisible
+    setSelectionHelperVisible,
+    showMetadata,
+    setShowMetadata
   } = useTapStore();
 
   return (
@@ -61,6 +63,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
             {/* Content */}
             <div className="p-6 space-y-6 overflow-y-auto">
+              {/* AI Capabilities Section */}
+              <section className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">
+                  <Layout size={12} />
+                  <span>Display & UI</span>
+                </div>
+
+                <div className="space-y-3">
+                  <div 
+                    onClick={() => setShowMetadata(!showMetadata)}
+                    className={cn(
+                      "group p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between",
+                      showMetadata 
+                        ? "bg-blue-500/10 border-blue-500/30" 
+                        : "bg-white/5 border-white/10 hover:border-white/20"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                        showMetadata ? "bg-blue-500/20 text-blue-400" : "bg-white/5 text-white/40"
+                      )}>
+                        <Info size={20} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold">Node Metadata</div>
+                        <div className="text-[10px] text-[var(--app-text-muted)]">Show generation time, resolution, and model info.</div>
+                      </div>
+                    </div>
+                    <div className={cn(
+                      "w-10 h-5 rounded-full relative transition-all duration-300 border",
+                      showMetadata ? "bg-blue-500/20 border-blue-500/50" : "bg-white/5 border-white/10"
+                    )}>
+                      <motion.div 
+                        animate={{ x: showMetadata ? 20 : 2 }}
+                        className={cn(
+                          "absolute top-1 w-3 h-3 rounded-full shadow-sm",
+                          showMetadata ? "bg-blue-400" : "bg-white/20"
+                        )}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               {/* AI Capabilities Section */}
               <section className="space-y-4">
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[var(--app-text-muted)]">

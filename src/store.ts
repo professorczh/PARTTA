@@ -111,6 +111,11 @@ export interface NodeData extends Record<string, unknown> {
   isGenerated?: boolean; // Whether the output is AI generated (intercepts pass-through)
   includeTitleInOutput?: boolean; // Whether to include label in output string
   thoughtSignature?: string; // For Gemini 3 multi-turn reasoning
+  metadata?: {
+    duration?: number;
+    resolution?: string;
+    modelName?: string;
+  };
   config?: {
     mask?: string;
     model?: string;
@@ -162,6 +167,7 @@ interface TapState {
   isCtrlPressed: boolean;
   isShiftPressed: boolean;
   isAltPressed: boolean;
+  showMetadata: boolean;
   setDemoMode: (enabled: boolean) => void;
   setRecognitionMode: (enabled: boolean) => void;
   setMultiSelectMasterEnabled: (enabled: boolean) => void;
@@ -173,6 +179,7 @@ interface TapState {
   setCtrlPressed: (enabled: boolean) => void;
   setShiftPressed: (enabled: boolean) => void;
   setAltPressed: (enabled: boolean) => void;
+  setShowMetadata: (enabled: boolean) => void;
   addProvider: (provider: ProviderConfig) => void;
   updateProvider: (id: string, provider: Partial<ProviderConfig>) => void;
   removeProvider: (id: string) => void;
@@ -285,6 +292,7 @@ export const useTapStore = create<TapState>()(
       isCtrlPressed: false,
       isShiftPressed: false,
       isAltPressed: false,
+      showMetadata: true,
       setDemoMode: (enabled: boolean) => set({ isDemoMode: enabled }),
       setRecognitionMode: (enabled: boolean) => set({ isRecognitionMode: enabled }),
       setMultiSelectMasterEnabled: (enabled: boolean) => set({ isMultiSelectMasterEnabled: enabled }),
@@ -304,6 +312,7 @@ export const useTapStore = create<TapState>()(
         if (get().isAltPressed === enabled) return;
         set({ isAltPressed: enabled });
       },
+      setShowMetadata: (enabled: boolean) => set({ showMetadata: enabled }),
       onNodesChange: (changes: NodeChange<TapNode>[]) => {
         const currentNodes = get().nodes;
         
@@ -1078,7 +1087,8 @@ export const useTapStore = create<TapState>()(
         skipDeleteConfirm: state.skipDeleteConfirm,
         skipOverwriteConfirm: state.skipOverwriteConfirm,
         rememberPinTargetChoice: state.rememberPinTargetChoice,
-        lastPinTargetId: state.lastPinTargetId
+        lastPinTargetId: state.lastPinTargetId,
+        showMetadata: state.showMetadata
       }),
     }
   )

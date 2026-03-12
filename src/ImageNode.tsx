@@ -4,6 +4,7 @@ import { useTapStore, TapNode, UploadedImage, Pin } from './store';
 import { useShallow } from 'zustand/react/shallow';
 import { ImageIcon, ArrowUp, X, Play, Loader2, Eye, Edit3, Terminal, Check, Trash2, Plus, Link as LinkIcon, CornerDownRight } from 'lucide-react';
 import { NodePromptInput } from './NodePromptInput';
+import { NodeMetadata } from './components/NodeMetadata';
 import { EditableTitle } from './components/EditableTitle';
 import { aiService } from './services/aiService';
 import { resolvePrompt } from './utils/promptResolver';
@@ -53,6 +54,7 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
 
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState<number | undefined>(undefined);
 
   // Global listeners for dragging and deletion
   useEffect(() => {
@@ -114,6 +116,19 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
     const img = e.currentTarget;
     const imageUrl = img.src;
     
+    // Detect resolution and update metadata if it's the main output
+    if (img.naturalWidth && img.naturalHeight && !previewImageUrl) {
+      const resolution = `${img.naturalWidth} x ${img.naturalHeight}`;
+      if (data.metadata?.resolution !== resolution) {
+        updateNodeData(id, { 
+          metadata: { 
+            ...data.metadata, 
+            resolution 
+          } 
+        });
+      }
+    }
+
     // CRITICAL: If we are just previewing a thumbnail, DON'T adjust the node height.
     // This prevents the "jittering/stretching" when moving mouse between thumbnails.
     if (previewImageUrl && imageUrl === previewImageUrl) return;
@@ -308,6 +323,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
       return;
     }
 
+    const runStartTime = Date.now();
+    setStartTime(runStartTime);
     updateNodeData(id, { isLoading: true });
 
     try {
@@ -324,9 +341,12 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         thoughtSignature: data.thoughtSignature
       });
 
+      const duration = (Date.now() - runStartTime) / 1000;
+
       if (response.error) {
         alert(`Error: ${response.error}`);
         updateNodeData(id, { isLoading: false });
+        setStartTime(undefined);
         return;
       }
 
@@ -351,11 +371,18 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
         isLoading: false, 
         outputs: newOutputs,
         outputVersions: newVersions,
-        thoughtSignature: response.thoughtSignature
+        thoughtSignature: response.thoughtSignature,
+        metadata: {
+          ...data.metadata,
+          duration,
+          modelName: currentModel.model.name
+        }
       });
+      setStartTime(undefined);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
       updateNodeData(id, { isLoading: false });
+      setStartTime(undefined);
     }
   };
 
@@ -735,6 +762,8 @@ export const ImageNode = memo((props: NodeProps<TapNode>) => {
           </motion.div>
         )}
       </div>
+
+      <NodeMetadata metadata={data.metadata} isLoading={data.isLoading} startTime={startTime} />
     </div>
 
       {/* Floating Control Panel */}
